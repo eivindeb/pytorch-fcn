@@ -105,7 +105,7 @@ def main():
 
     # 1. dataset
 
-    root = "/media/stx/LaCie/"  # osp.expanduser('~/data/datasets')
+    root = "/media/stx/LaCie/export"  # osp.expanduser('~/data/datasets')
     kwargs = {'num_workers': 4, 'pin_memory': True} if cuda else {}
     train_loader = torch.utils.data.DataLoader(
         torchfcn.datasets.RadarTest(root, split='train', transform=True),
