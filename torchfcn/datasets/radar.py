@@ -17,7 +17,7 @@ class RadarClassSegBase(data.Dataset):  # why not generator-function?
     class_names = np.array([
         "ship",
     ])
-    mean_bgr = np.array([104.00698793, 116.66876762, 122.67891434])  # TODO: what is this?
+    mean_bgr = np.array([50.3374548706])
 
     def __init__(self, root, radar_type="Radar1", split='train', transform=False, dataset_name="radar_base"):
         self.root = root
@@ -57,9 +57,11 @@ class RadarClassSegBase(data.Dataset):  # why not generator-function?
     def __getitem__(self, index):
         data_file = self.files[self.split][index]
         # load image
-        img = self.data_manager.load_image(data_file, 1, 1)
+        img = self.data_loader.load_image(data_file)
         # load label
-        lbl = self.data_manager.load_ais_layer(data_file, img.shape[0], img.shape[1], 1, 1)
+        lbl = self.data_loader.load_ais_layer(data_file.replace(".bmp", ".json"), img.shape[1], img.shape[0], 1, 1)
+        if len(lbl) == 0:
+            lbl = np.zeros(img.shape, dtype=np.uint8)
         #  lbl[lbl == 255] = -1  TODO: why?
         if self._transform:
             return self.transform(img, lbl)
