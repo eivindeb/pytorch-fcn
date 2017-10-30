@@ -120,7 +120,7 @@ def main():
 
     # 2. model
 
-    model = torchfcn.models.FCN32s(n_class=1)
+    model = torchfcn.models.FCN32s(n_class=2)
     start_epoch = 0
     start_iteration = 0
     if resume:
