@@ -106,13 +106,16 @@ def main():
     # 1. dataset
 
     root = "/media/stx/LaCie/export"  # osp.expanduser('~/data/datasets')
+
+    config = osp.expanduser("~/Projects/sensorfusion/logging/preprocess.json")
+
     kwargs = {'num_workers': 4, 'pin_memory': True} if cuda else {}
     train_loader = torch.utils.data.DataLoader(
-        torchfcn.datasets.RadarTest(root, split='train', transform=True),
+        torchfcn.datasets.RadarTest(root, split='train', transform=True, cfg=config),
         batch_size=1, shuffle=True, **kwargs)
     val_loader = torch.utils.data.DataLoader(
         torchfcn.datasets.RadarTest(
-            root, split='valid', transform=True),
+            root, split='valid', transform=True, cfg=config),
         batch_size=1, shuffle=False, **kwargs)
 
     # 2. model
