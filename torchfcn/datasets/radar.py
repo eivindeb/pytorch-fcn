@@ -22,7 +22,7 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
         "background",
         "ship",
     ])
-    mean_bgr = np.array([50.3374548706])
+    mean_bgr = np.array([50.3374548706, 50.3374548706, 50.3374548706])
 
     def __init__(self, root, split='train', transform=False, dataset_name="radar_base", radar_type="Radar1", cfg=None):
         self.root = root
@@ -63,25 +63,33 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
         data_file = self.files[self.split][index]
         # load image
         img = self.data_loader.load_image(data_file)
+        img_3ch = np.zeros((img.shape[0], 1000, 3))
+        img_3ch[:, :, 0] = img[:, 0:1000]
+        img_3ch[:, :, 1] = img[:, 0:1000]
+        img_3ch[:, :, 2] = img[:, 0:1000]
         # load label
-        lbl = self.data_loader.load_ais_layer(data_file.replace(".bmp", ".json"), img.shape[1], img.shape[0], 1, 1)
+        lbl = self.data_loader.load_ais_layer(data_file.replace(".bmp", ".json"), img_3ch.shape[1], img_3ch.shape[0], 1, 1)
         if len(lbl) == 0:
-            lbl = np.zeros(img.shape, dtype=np.uint8)
+            print("lbl zero")
+            lbl = np.zeros(img_3ch.shape[0:2], dtype=np.int32)
         #  lbl[lbl == 255] = -1  TODO: why?
         if self._transform:
-            return self.transform(img, lbl)
+            return self.transform(img_3ch, lbl)
         else:
-            return img, lbl
+            return img_3ch, lbl
 
     def transform(self, img, lbl):
+        # TODO: maybe we have to convert to RGB here?
         img = img.astype(np.float64)
         img -= self.mean_bgr
+        img = img.transpose(2, 0, 1)
         img = torch.from_numpy(img).float()
         lbl = torch.from_numpy(lbl).long()
         return img, lbl
 
     def untransform(self, img, lbl):
         img = img.numpy()
+        img = img.transpose(1, 2, 0)
         img += self.mean_bgr
         img = img.astype(np.uint8)
         lbl = lbl.numpy()
