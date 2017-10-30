@@ -11,15 +11,19 @@ import torch
 from torch.utils import data
 from .radar_dataloader import data_loader
 import datetime
+from os import listdir, makedirs
+import re
+import random
 
-class RadarClassSegBase(data.Dataset):  # why not generator-function?
+
+class RadarDatasetFolder(data.Dataset):  # why not generator-function?
 
     class_names = np.array([
         "ship",
     ])
     mean_bgr = np.array([50.3374548706])
 
-    def __init__(self, root, radar_type="Radar1", split='train', transform=False, dataset_name="radar_base"):
+    def __init__(self, root, split='train', transform=False, dataset_name="radar_base", radar_type="Radar1", cfg=None):
         self.root = root
         self.radar_type = radar_type
         self.split = split
@@ -28,16 +32,20 @@ class RadarClassSegBase(data.Dataset):  # why not generator-function?
         self.files = collections.defaultdict(list)
         datasets_dir = osp.join(self.root, "datasets")
 
-        try:
-            with open(osp.join(datasets_dir, 'config.json'), 'r') as f:
-                cfg = json.load(f)
-        except:
-            print('Unable to read configuration file preprocess.json')
-            cfg = None
+        if cfg is not None:
+            try:
+                with open(cfg, 'r') as f:
+                    cfg = json.load(f)
+            except:
+                print("Could not read config file {}".format(cfg))
+                cfg = None
 
         self.data_loader = data_loader(self.root, cfg)
 
         try:
+            if not osp.exists(datasets_dir):
+                makedirs(datasets_dir)
+
             with open(osp.join(datasets_dir, "%s_%s_%s.txt" % (self.dataset_name, self.radar_type, self.split)), "r") as file:
                 for line in file:
                     line = line.strip()
@@ -45,11 +53,7 @@ class RadarClassSegBase(data.Dataset):  # why not generator-function?
 
         except:
             print("No file found for %s dataset %s, generating file instead" % (self.split, self.dataset_name))
-            self.generate_dataset_file(self.dataset_name)
-            with open(osp.join(datasets_dir, "%s_%s_%s.txt" % (self.dataset_name, self.radar_type, self.split), "r")) as file:
-                for line in file:
-                    line = line.strip()
-                    self.files[split].append(line)
+            self.generate_dataset_file()
 
     def __len__(self):
         return len(self.files[self.split])
@@ -82,16 +86,31 @@ class RadarClassSegBase(data.Dataset):  # why not generator-function?
         lbl = lbl.numpy()
         return img, lbl
 
-    def generate_dataset_file(self, dataset_name):
+    def generate_dataset_file(self):
         datasets_dir = osp.join(self.root, "datasets")
-        with open(osp.join(datasets_dir, "%s_%s_%s.txt" % (dataset_name, self.radar_type, self.split), "w")) as file:
-            for hour in range(11, 13):
-                for minute in range(0, 5):
-                    for second in range(0, 60):
-                        t = datetime.datetime(2017, 10, 12, hour, minute, second)
-                        filename = self.data_loader.get_filename_sec(t, self.radar_type, "bmp")  # TODO: very slow
-                        if len(filename) != 0:  # TODO: can there be more than one?
-                            file.write("%s\n" % (filename[0]))
+        files = self.collect_data_files_recursively(self.root)
+        random.shuffle(files)
+        with open(osp.join(datasets_dir, "%s_%s_%s.txt" % (self.dataset_name, self.radar_type, "train")), "w+") as train:
+            with open(osp.join(datasets_dir, "%s_%s_%s.txt" % (self.dataset_name, self.radar_type, "valid")), "w+") as valid:
+                for i, filename in enumerate(files):
+                    if i <= len(files)*0.8:
+                        train.write("{}\n".format(filename))
+                        self.files["train"].append(filename)
+                    else:
+                        valid.write("{}\n".format(filename))
+                        self.files["valid"].append(filename)
+
+    def collect_data_files_recursively(self, parent, files=None):
+        if files is None:
+            files = []
+
+        for child in listdir(parent):
+            if re.match("^[0-9-]*$", child) or child == self.radar_type:
+                files = self.collect_data_files_recursively(osp.join(parent, child), files)
+            elif child.endswith(".bmp"):
+                files.append(osp.join(parent, child))
+
+        return files
 
     def get_mean(self):
         mean_sum = 0
@@ -101,13 +120,16 @@ class RadarClassSegBase(data.Dataset):  # why not generator-function?
         return mean_sum/len(self.files[self.split])
 
 
-class RadarTest(RadarClassSegBase):
+class RadarTest(RadarDatasetFolder):
 
-    def __init__(self, root, split='train', transform=False, dataset_name="radartest"):
+    def __init__(self, root, split='train', transform=False, dataset_name="radartest", cfg=None):
         super(RadarTest, self).__init__(
-            root, split=split, transform=transform, dataset_name=dataset_name)
+            root, split=split, transform=transform, dataset_name=dataset_name, cfg=cfg)
 
-#test = RadarTest("/media/stx/LaCie/export", split="train")
+
+#config = osp.expanduser("~/Projects/sensorfusion/logging/preprocess.json")
+#test = RadarTest("/media/stx/LaCie/export/2017-10-12", split="valid", cfg=config)
+#print("get")
 #print(test.get_mean())
 
 
