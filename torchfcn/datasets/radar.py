@@ -19,6 +19,7 @@ import random
 class RadarDatasetFolder(data.Dataset):  # why not generator-function?
 
     class_names = np.array([
+        "background",
         "ship",
     ])
     mean_bgr = np.array([50.3374548706])
