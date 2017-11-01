@@ -104,9 +104,29 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
         lbl = lbl.numpy()
         return img, lbl
 
-    def generate_dataset_file(self):
+    def generate_dataset_file(self, remove_files_without_targets=True):
+        def no_targets(progress, filename):
+            print("Checking targets for image {}".format(progress))
+            img = self.data_loader.load_image(filename)
+            targets = self.data_loader.load_ais_layer(filename.replace(".bmp", ".json"), img.shape[1], img.shape[0], 1, 1)
+            return len(targets) == 0 or np.max(targets[self.data_range]) == 0
+
+        def collect_data_files_recursively(parent, filenames=None):
+            if filenames is None:
+                filenames = []
+
+            for child in listdir(parent):
+                if re.match("^[0-9-]*$", child) or child == self.radar_type:
+                    filenames = collect_data_files_recursively(osp.join(parent, child), filenames)
+                elif child.endswith(".bmp"):
+                    filenames.append(osp.join(parent, child))
+
+            return filenames
+
         datasets_dir = osp.join(self.root, "datasets")
-        files = self.collect_data_files_recursively(self.root)
+        files = collect_data_files_recursively(self.root)
+        if remove_files_without_targets:
+            files = [file for i, file in enumerate(files) if not no_targets("{}/{}".format(i, len(files)), file)]
         random.shuffle(files)
         with open(osp.join(datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, self.radar_type, "train")), "w+") as train:
             with open(osp.join(datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, self.radar_type, "valid")), "w+") as valid:
@@ -117,18 +137,6 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
                     else:
                         valid.write("{}\n".format(filename))
                         self.files["valid"].append(filename)
-
-    def collect_data_files_recursively(self, parent, files=None):
-        if files is None:
-            files = []
-
-        for child in listdir(parent):
-            if re.match("^[0-9-]*$", child) or child == self.radar_type:
-                files = self.collect_data_files_recursively(osp.join(parent, child), files)
-            elif child.endswith(".bmp"):
-                files.append(osp.join(parent, child))
-
-        return files
 
     def get_mean(self):
         mean_sum = 0
