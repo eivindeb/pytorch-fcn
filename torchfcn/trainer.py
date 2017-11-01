@@ -137,9 +137,9 @@ class Trainer(object):
         val_loss /= len(self.val_loader)
 
         with open(osp.join(self.out, 'log.csv'), 'a') as f:
-            elapsed_time = (
-                datetime.datetime.now(pytz.timezone('Asia/Tokyo')) -
-                self.timestamp_start).total_seconds()
+            elapsed_time = \
+                datetime.datetime.now(pytz.timezone('Europe/Oslo')) - \
+                self.timestamp_start.total_seconds()
             log = [self.epoch, self.iteration] + [''] * 5 + \
                   [val_loss] + list(metrics) + [elapsed_time]
             log = map(str, log)

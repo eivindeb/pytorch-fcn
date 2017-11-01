@@ -41,7 +41,7 @@ def get_log_dir(model_name, config_id, cfg):
         if '/' in v:
             continue
         name += '_%s-%s' % (k.upper(), v)
-    now = datetime.datetime.now(pytz.timezone('Asia/Tokyo'))
+    now = datetime.datetime.now(pytz.timezone('Europe/Oslo'))
     name += '_VCS-%s' % git_hash()
     name += '_TIME-%s' % now.strftime('%Y%m%d-%H%M%S')
     # create out
