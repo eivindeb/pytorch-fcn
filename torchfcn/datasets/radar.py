@@ -23,6 +23,7 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
         "ship",
     ])
     mean_bgr = np.array([50.3374548706, 50.3374548706, 50.3374548706])
+    INDEX_FILE_NAME = "{}_{}_{}.txt"
 
     def __init__(self, root, split='train', transform=False, dataset_name="radar_base", radar_type="Radar1", cfg=None):
         self.root = root
@@ -47,13 +48,13 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
             if not osp.exists(datasets_dir):
                 makedirs(datasets_dir)
 
-            with open(osp.join(datasets_dir, "%s_%s_%s.txt" % (self.dataset_name, self.radar_type, self.split)), "r") as file:
+            with open(osp.join(datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, self.radar_type, self.split)), "r") as file:
                 for line in file:
                     line = line.strip()
                     self.files[split].append(line)
 
         except:
-            print("No file found for %s dataset %s, generating file instead" % (self.split, self.dataset_name))
+            print("No index file found for dataset, generating files instead")
             self.generate_dataset_file()
 
     def __len__(self):
@@ -99,8 +100,8 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
         datasets_dir = osp.join(self.root, "datasets")
         files = self.collect_data_files_recursively(self.root)
         random.shuffle(files)
-        with open(osp.join(datasets_dir, "%s_%s_%s.txt" % (self.dataset_name, self.radar_type, "train")), "w+") as train:
-            with open(osp.join(datasets_dir, "%s_%s_%s.txt" % (self.dataset_name, self.radar_type, "valid")), "w+") as valid:
+        with open(osp.join(datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, self.radar_type, "train")), "w+") as train:
+            with open(osp.join(datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, self.radar_type, "valid")), "w+") as valid:
                 for i, filename in enumerate(files):
                     if i <= len(files)*0.8:
                         train.write("{}\n".format(filename))
