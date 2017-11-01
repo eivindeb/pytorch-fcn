@@ -25,12 +25,13 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
     mean_bgr = np.array([50.3374548706, 50.3374548706, 50.3374548706])
     INDEX_FILE_NAME = "{}_{}_{}.txt"
 
-    def __init__(self, root, split='train', transform=False, dataset_name="radar_base", radar_type="Radar1", cfg=None):
+    def __init__(self, root, split='train', transform=False, dataset_name="radar_base", radar_type="Radar1", data_range=np.s_[:, :], cfg=None):
         self.root = root
         self.radar_type = radar_type
         self.split = split
         self._transform = transform
         self.dataset_name = dataset_name
+        self.data_range = data_range
         self.files = collections.defaultdict(list)
         datasets_dir = osp.join(self.root, "datasets")
 
@@ -64,15 +65,22 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
         data_file = self.files[self.split][index]
         # load image
         img = self.data_loader.load_image(data_file)
-        img_3ch = np.zeros((img.shape[0], 1000, 3))
-        img_3ch[:, :, 0] = img[:, 0:1000]
-        img_3ch[:, :, 1] = img[:, 0:1000]
-        img_3ch[:, :, 2] = img[:, 0:1000]
+
+        # Construct 3 channel version of data from data range in image
+        # TODO: can start and stop be None independently of eachother?
+        height = img.shape[0] if self.data_range[0].start is None else self.data_range[0].stop - self.data_range[0].start
+        width = img.shape[1] if self.data_range[1].start is None else self.data_range[1].stop - self.data_range[1].start
+        img_3ch = np.zeros((height, width, 3), dtype=np.uint8)
+        img_3ch[:, :, 0] = img[self.data_range]
+        img_3ch[:, :, 1] = img[self.data_range]
+        img_3ch[:, :, 2] = img[self.data_range]
+
         # load label
-        lbl = self.data_loader.load_ais_layer(data_file.replace(".bmp", ".json"), img_3ch.shape[1], img_3ch.shape[0], 1, 1)
+        lbl = self.data_loader.load_ais_layer(data_file.replace(".bmp", ".json"), img.shape[1], img.shape[0], 1, 1)
         if len(lbl) == 0:
-            print("lbl zero")
-            lbl = np.zeros(img_3ch.shape[0:2], dtype=np.int32)
+            lbl = np.zeros(img_3ch.shape[0:2], dtype=np.uint8)
+        else:
+            lbl = lbl[self.data_range]
         #  lbl[lbl == 255] = -1  TODO: why?
         if self._transform:
             return self.transform(img_3ch, lbl)
@@ -132,9 +140,9 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
 
 class RadarTest(RadarDatasetFolder):
 
-    def __init__(self, root, split='train', transform=False, dataset_name="radartest", cfg=None):
+    def __init__(self, root, split='train', transform=False, dataset_name="radartest", data_range=np.s_[:, 0:1000], cfg=None):
         super(RadarTest, self).__init__(
-            root, split=split, transform=transform, dataset_name=dataset_name, cfg=cfg)
+            root, split=split, transform=transform, dataset_name=dataset_name, data_range=data_range, cfg=cfg)
 
 
 #config = osp.expanduser("~/Projects/sensorfusion/logging/preprocess.json")
