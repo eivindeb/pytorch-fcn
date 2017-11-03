@@ -150,6 +150,7 @@ class Trainer(object):
         if is_best:
             self.best_mean_iu = mean_iu
         torch.save({
+            'out': self.out,
             'epoch': self.epoch,
             'iteration': self.iteration,
             'arch': self.model.__class__.__name__,
