@@ -172,6 +172,17 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
             mean_sum += np.sum(img)/np.size(img)
         return mean_sum/len(self.files[self.split])
 
+    def get_class_shares(self):
+        class_shares = {c: 0 for c in self.class_names}
+        for i, file in enumerate(self.files[self.split]):
+            print("Calculating class shares for file {} of {}".format(i, len(self.files[self.split])))
+            img = self.data_loader.load_image(file)
+            lbl = self.data_loader.load_ais_layer(file.replace(".bmp", ".json"), img.shape[1], img.shape[0], 1, 1)
+            for c_index, c in enumerate(self.class_names):
+                class_shares[c] = (class_shares[c] + lbl[lbl == c_index].size/lbl.size)/(2 if i != 0 else 1)
+
+        return class_shares
+
 
 class RadarTest(RadarDatasetFolder):
 
