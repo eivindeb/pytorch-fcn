@@ -31,13 +31,14 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
     mean_bgr = np.array([50.3374548706, 50.3374548706, 50.3374548706])
     INDEX_FILE_NAME = "{}_{}_{}.txt"
 
-    def __init__(self, root, split='train', transform=False, dataset_name="radar_base", radar_type="Radar1", data_range=np.s_[:, :], cfg=None):
+    def __init__(self, root, split='train', transform=False, dataset_name="radar_base", radar_type="Radar1", data_range=np.s_[:, :], cache_labels=False, cfg=None):
         self.root = root
         self.radar_type = radar_type
         self.split = split
         self._transform = transform
         self.dataset_name = dataset_name
         self.data_range = data_range
+        self.cache_labels = cache_labels
         self.files = collections.defaultdict(list)
         datasets_dir = osp.join(self.root, "datasets")
 
@@ -82,11 +83,31 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
         img_3ch[:, :, 2] = img[self.data_range]
 
         # load label
-        lbl = self.data_loader.load_ais_layer(data_file.replace(".bmp", ".json"), img.shape[1], img.shape[0], 1, 1)
-        if len(lbl) == 0:
-            lbl = np.zeros(img_3ch.shape[0:2], dtype=np.uint8)
-        else:
-            lbl = lbl[self.data_range]
+        cached_label_missing = False
+        if self.cache_labels:
+            try:
+                lbl = np.load(data_file.replace(".bmp", "_labels.npy"))
+            except IOError as e:
+                cached_label_missing = True
+        if not self.cache_labels or cached_label_missing:
+            lbl = self.data_loader.load_ais_layer(data_file.replace(".bmp", ".json"), img.shape[1], img.shape[0], 1, 1)
+            if len(lbl) == 0:
+                lbl = np.zeros(img_3ch.shape[0:2], dtype=np.uint8)
+            else:
+                lbl = lbl[self.data_range]
+
+            if cached_label_missing:
+                label_name = ""
+                if self.data_range[0].start is None:
+                    label_name += "_labels_all"
+                else:
+                    label_name += "_labels_{}-{}".format(self.data_range[0].start, self.data_range[0].stop)
+                if self.data_range[1].start is None:
+                    label_name += "_all"
+                else:
+                    label_name += "_{}-{}".format(self.data_range[1].start, self.data_range[1].stop)
+                np.save(data_file.replace(".bmp", label_name), lbl)
+
         #  lbl[lbl == 255] = -1  TODO: why?
         if self._transform:
             return self.transform(img_3ch, lbl)
@@ -154,9 +175,9 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
 
 class RadarTest(RadarDatasetFolder):
 
-    def __init__(self, root, split='train', transform=False, dataset_name="radartest", data_range=np.s_[:, 0:1000], cfg=None):
+    def __init__(self, root, split='train', transform=False, dataset_name="radartest", data_range=np.s_[:, 0:1000], cache_labels=True, cfg=None):
         super(RadarTest, self).__init__(
-            root, split=split, transform=transform, dataset_name=dataset_name, data_range=data_range, cfg=cfg)
+            root, split=split, transform=transform, dataset_name=dataset_name, data_range=data_range, cache_labels=cache_labels, cfg=cfg)
 
 
 #config = osp.expanduser("~/Projects/sensorfusion/logging/preprocess.json")
