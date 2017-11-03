@@ -9,18 +9,28 @@ import PIL.Image
 import scipy.io
 import torch
 from torch.utils import data
-from .radar_dataloader import data_loader
+from radar_dataloader import data_loader
 import datetime
 from os import listdir, makedirs
 import re
 import random
 
 
+"""
+TODO:
+- load chart layer and use to set land as unlabeled?
+- remove targets which are not visible to radar (hidden by land in front)
+- finish caching labels
+- address class imbalance (perhaps in loss function?)
+- modify visualization function (show percentage estimation of class?)
+- should probably cache entire chart layer
+"""
+
+
 class RadarDatasetFolder(data.Dataset):  # why not generator-function?
 
     class_names = np.array([
         "background",
-        "ship",
     ])
 
     class_weights = np.array([
@@ -31,7 +41,8 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
     mean_bgr = np.array([50.3374548706, 50.3374548706, 50.3374548706])
     INDEX_FILE_NAME = "{}_{}_{}.txt"
 
-    def __init__(self, root, split='train', transform=False, dataset_name="radar_base", radar_type="Radar1", data_range=np.s_[:, :], cache_labels=False, cfg=None):
+    def __init__(self, root, split='train', transform=False, dataset_name="radar_base", radar_type="Radar1",
+                 data_range=np.s_[:, :], cache_labels=False, filter_land=False, targets=["ship"], cfg=None):
         self.root = root
         self.radar_type = radar_type
         self.split = split
@@ -39,8 +50,17 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
         self.dataset_name = dataset_name
         self.data_range = data_range
         self.cache_labels = cache_labels
+        self.filter_land = filter_land
+        self.targets = targets
         self.files = collections.defaultdict(list)
         datasets_dir = osp.join(self.root, "datasets")
+
+        if "land" in targets and filter_land:
+            print("Land is both a target and filtered out, exiting")
+            exit(0)
+
+        for target in targets:
+            np.append(self.class_names, target)
 
         if cfg is not None:
             try:
@@ -69,46 +89,63 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
         return len(self.files[self.split])
 
     def __getitem__(self, index):
+        def get_cached_label_name(data_range, data_size, targets, land_filtered):
+            label_name = ""
+            if data_range[0].start is None and data_range[0].stop is None and data_range[0].step is None:
+                label_name += "_labels_all"
+            else:
+                label_name += "_labels_{}-{}-{}".format(data_range[0].start if data_range[0].start is not None else 0,
+                                                        data_range[0].step if data_range[0].step is not None else 1,
+                                                        data_range[0].stop if data_range[0].stop is not None else data_size[0])
+            if data_range[1].start is None and data_range[1].stop is None and data_range[1].step is None:
+                label_name += "_all"
+            else:
+                label_name += "_{}-{}-{}".format(data_range[1].start if data_range[1].start is not None else 0,
+                                                data_range[1].step if data_range[1].step is not None else 1,
+                                                data_range[1].stop if data_range[1].stop is not None else data_size[1])
+
+            for target in targets:
+                label_name += "_{}".format(target)
+
+            if land_filtered:
+                label_name += "_land-filtered"
+
+            return label_name
+
         data_file = self.files[self.split][index]
         # load image
         img = self.data_loader.load_image(data_file)
 
-        # Construct 3 channel version of data from data range in image
-        # TODO: can start and stop be None independently of eachother?
-        height = img.shape[0] if self.data_range[0].start is None else self.data_range[0].stop - self.data_range[0].start
-        width = img.shape[1] if self.data_range[1].start is None else self.data_range[1].stop - self.data_range[1].start
-        img_3ch = np.zeros((height, width, 3), dtype=np.uint8)
-        img_3ch[:, :, 0] = img[self.data_range]
-        img_3ch[:, :, 1] = img[self.data_range]
-        img_3ch[:, :, 2] = img[self.data_range]
+        # Construct 3 channel version of image from selected data range
+        img_3ch = np.repeat(img[self.data_range[0], self.data_range[1], np.newaxis], 3, axis=2)
 
         # load label
         cached_label_missing = False
         if self.cache_labels:
             try:
-                lbl = np.load(data_file.replace(".bmp", "_labels.npy"))
+                lbl = np.load(data_file.replace(".bmp", "{}.npy".format(get_cached_label_name(self.data_range, img.shape, self.targets, self.filter_land ))))
             except IOError as e:
                 cached_label_missing = True
+
         if not self.cache_labels or cached_label_missing:
-            lbl = self.data_loader.load_ais_layer(data_file.replace(".bmp", ".json"), img.shape[1], img.shape[0], 1, 1)
-            if len(lbl) == 0:
-                lbl = np.zeros(img_3ch.shape[0:2], dtype=np.uint8)
+            meta_file = data_file.replace(".bmp", ".json")
+            if "ship" in self.targets:
+                lbl = self.data_loader.load_ais_layer(meta_file, img.shape[1], img.shape[0], 1, 1).astype(dtype=np.int32)
+                if len(lbl) == 0:
+                    lbl = np.zeros(img_3ch.shape[0:2], dtype=np.int32)
+                else:
+                    lbl = lbl[self.data_range]
             else:
-                lbl = lbl[self.data_range]
+                lbl = np.zeros(img_3ch.shape[0:2], dtype=np.int32)
+
+            if "land" in self.targets or self.filter_land:
+                land = self.data_loader.load_chart_layer(meta_file, img.shape[1], img.shape[0], 0, 1, 1)[self.data_range]
+
+                lbl[land == 1] = 2 if "land" in self.targets else -1
 
             if cached_label_missing:
-                label_name = ""
-                if self.data_range[0].start is None:
-                    label_name += "_labels_all"
-                else:
-                    label_name += "_labels_{}-{}".format(self.data_range[0].start, self.data_range[0].stop)
-                if self.data_range[1].start is None:
-                    label_name += "_all"
-                else:
-                    label_name += "_{}-{}".format(self.data_range[1].start, self.data_range[1].stop)
-                np.save(data_file.replace(".bmp", label_name), lbl)
+                np.save(data_file.replace(".bmp", get_cached_label_name(self.data_range, img.shape, self.targets, self.filter_land)), lbl)
 
-        #  lbl[lbl == 255] = -1  TODO: why?
         if self._transform:
             return self.transform(img_3ch, lbl)
         else:
@@ -186,13 +223,22 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
 
 class RadarTest(RadarDatasetFolder):
 
-    def __init__(self, root, split='train', transform=False, dataset_name="radartest", data_range=np.s_[:, 0:1000], cache_labels=True, cfg=None):
+    def __init__(self, root, split='train', transform=False, dataset_name="radartest",
+                 data_range=np.s_[200:3800, 0:1000], cache_labels=True, targets=["ship"], filter_land=True, cfg=None):
         super(RadarTest, self).__init__(
-            root, split=split, transform=transform, dataset_name=dataset_name, data_range=data_range, cache_labels=cache_labels, cfg=cfg)
+            root, split=split, transform=transform, dataset_name=dataset_name,
+            data_range=data_range, cache_labels=cache_labels, targets=targets, filter_land=filter_land, cfg=cfg)
 
 
-#config = osp.expanduser("~/Projects/sensorfusion/logging/preprocess.json")
-#test = RadarTest("/media/stx/LaCie/export/2017-10-12", split="valid", cfg=config)
+config = osp.expanduser("~/Projects/sensorfusion/logging/preprocess.json")
+valid = RadarTest("/media/stx/LaCie/export/", split="valid", cfg=config)
+train = RadarTest("/media/stx/LaCie/export/", split="train", cfg=config)
+test = [valid, train]
+#print(test.get_class_shares())'
+for dataset in test:
+    for i, fi in enumerate(dataset.files[dataset.split]):
+        junk = dataset[i]
+        print("Cached labels for {} ({}/{})".format(fi, i, len(dataset)))
 #print("get")
 #print(test.get_mean())
 
