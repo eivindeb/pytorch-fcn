@@ -22,6 +22,12 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
         "background",
         "ship",
     ])
+
+    class_weights = np.array([
+        1,
+        11000,
+    ])
+
     mean_bgr = np.array([50.3374548706, 50.3374548706, 50.3374548706])
     INDEX_FILE_NAME = "{}_{}_{}.txt"
 

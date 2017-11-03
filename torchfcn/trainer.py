@@ -101,7 +101,7 @@ class Trainer(object):
             data, target = Variable(data, volatile=True), Variable(target)
             score = self.model(data)
 
-            loss = cross_entropy2d(score, target,
+            loss = cross_entropy2d(score, target, weight=torch.from_numpy(self.train_loader.dataset.class_weights).float().cuda(),
                                    size_average=self.size_average)
             if np.isnan(float(loss.data[0])):
                 raise ValueError('loss is nan while validating')
@@ -167,7 +167,7 @@ class Trainer(object):
                 continue  # for resuming
             self.iteration = iteration
 
-            if self.iteration % self.interval_validate == 0:
+            if self.iteration % self.interval_validate == 0 and self.iteration != 0:
                 self.validate()
 
             if self.cuda:
@@ -176,7 +176,7 @@ class Trainer(object):
             self.optim.zero_grad()
             score = self.model(data)
 
-            loss = cross_entropy2d(score, target,
+            loss = cross_entropy2d(score, target, weight=torch.from_numpy(self.train_loader.dataset.class_weights).float().cuda(),
                                    size_average=self.size_average)
             loss /= len(data)
             if np.isnan(float(loss.data[0])):
