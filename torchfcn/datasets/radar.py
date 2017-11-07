@@ -41,8 +41,9 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
     mean_bgr = np.array([50.3374548706, 50.3374548706, 50.3374548706])
     INDEX_FILE_NAME = "{}_{}_{}.txt"
 
-    def __init__(self, root, split='train', transform=False, dataset_name="radar_base", radar_type="Radar1",
-                 data_range=np.s_[:, :], cache_labels=False, filter_land=False, targets=["ship"], cfg=None):
+    def __init__(self, root, split='train', transform=False, dataset_name="radar_base", radar_type=("Radar1", "Radar0"),
+                 data_ranges=(np.s_[:, :]), cache_labels=False, filter_land=False,
+                 land_is_target=False, remove_hidden_targets=True, cfg=None):
         self.root = root
         self.radar_type = radar_type
         self.split = split
