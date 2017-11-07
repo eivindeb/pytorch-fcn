@@ -9,7 +9,7 @@ import PIL.Image
 import scipy.io
 import torch
 from torch.utils import data
-from radar_dataloader import data_loader
+from .dataloader import data_loader
 import datetime
 from os import listdir, makedirs
 import re
@@ -70,7 +70,7 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
                 print("Could not read config file {}".format(cfg))
                 cfg = None
 
-        self.data_loader = data_loader(self.root, cfg)
+        self.data_loader = data_loader(self.root, sensor_config=osp.join(here, "dataloader.json"))
 
         try:
             if not osp.exists(datasets_dir):
