@@ -19,18 +19,19 @@ import random
 """
 TODO:
 - load chart layer and use to set land as unlabeled?
-- remove targets which are not visible to radar (hidden by land in front)
+- choose one data file from each 10 minute block
+- remove targets which are not visible to radar (hidden by land in front). Perform bitwise OR on columns to create mask of everything hidden by land
 - finish caching labels
 - address class imbalance (perhaps in loss function?)
 - modify visualization function (show percentage estimation of class?)
-- should probably cache entire chart layer
 """
-
+here = osp.dirname(osp.abspath(__file__))
 
 class RadarDatasetFolder(data.Dataset):  # why not generator-function?
 
     class_names = np.array([
         "background",
+        "ship",
     ])
 
     class_weights = np.array([
@@ -52,24 +53,18 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
         self.data_ranges = data_ranges
         self.cache_labels = cache_labels
         self.filter_land = filter_land
-        self.targets = targets
+        self.land_is_target = land_is_target
         self.files = collections.defaultdict(list)
+        self.remove_hidden_targets = remove_hidden_targets
+        self.min_data_interval = 5
         datasets_dir = osp.join(self.root, "datasets")
 
-        if "land" in targets and filter_land:
-            print("Land is both a target and filtered out, exiting")
-            exit(0)
-
-        for target in targets:
-            np.append(self.class_names, target)
-
-        if cfg is not None:
-            try:
-                with open(cfg, 'r') as f:
-                    cfg = json.load(f)
-            except:
-                print("Could not read config file {}".format(cfg))
-                cfg = None
+        if land_is_target:
+            if filter_land:
+                print("Land is both a target and filtered out, exiting")
+                exit(0)
+            else:
+                np.append(self.class_names, "land")
 
         self.data_loader = data_loader(self.root, sensor_config=osp.join(here, "dataloader.json"))
 
@@ -101,26 +96,7 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
         img_3ch = np.repeat(img[data_range[0], data_range[1], np.newaxis], 3, axis=2)
 
         # load label
-        cached_label_missing = False
-        if self.cache_labels:
-            try:
-                lbl = np.load(data_file.replace(".bmp", "{}.npy".format(get_cached_label_name(self.data_range, img.shape, self.targets, self.filter_land ))))
-            except IOError as e:
-                cached_label_missing = True
-
-        if not self.cache_labels or cached_label_missing:
-            meta_file = data_file.replace(".bmp", ".json")
-            if "ship" in self.targets:
-                lbl = self.data_loader.load_ais_layer(meta_file, img.shape[1], img.shape[0], 1, 1).astype(dtype=np.int32)
-                if len(lbl) == 0:
-                    lbl = np.zeros(img_3ch.shape[0:2], dtype=np.int32)
-                else:
-                    lbl = lbl[self.data_range]
-            else:
-                lbl = np.zeros(img_3ch.shape[0:2], dtype=np.int32)
-
-            if "land" in self.targets or self.filter_land:
-                land = self.data_loader.load_chart_layer(meta_file, img.shape[1], img.shape[0], 0, 1, 1)[self.data_range]
+        ais, land = self.get_labels(data_file)
 
         lbl = ais[data_range].astype(dtype=np.int32)
 
@@ -234,26 +210,87 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
 
         return class_shares
 
+    def collect_and_cache_labels(self):
+        files = self.files[self.split]
+
+        datasets_dir = osp.join(self.root, "datasets")
+        with open(osp.join(datasets_dir, self.INDEX_FILE_NAME.format(
+                self.dataset_name, self.radar_type, "train" if self.split == "valid" else "valid")), "r") as file:
+            for line in file:
+                line = line.strip()
+                files.append(line.split(","))
+
+        for i, f in enumerate(files):
+            print("Caching labels for file {} of {}".format(i, len(files)))
+            ais, land = self.get_labels(f[0])
+
+    def get_labels(self, data_file):
+        radar_index = data_file.split("/")[-2][-1]  # Extract radar type from filename e.g. 0 from ../Radar0/filename.bmp
+        meta_file = data_file.replace(".bmp", ".json")
+        if self.cache_labels:
+            try:
+                ais = np.load(data_file.replace(".bmp", "{}.npy".format("_label_ship")))
+            except IOError as e:
+                ais = self.data_loader.load_ais_layer(meta_file, 1, radar_index)
+
+                if len(ais) == 0:
+                    ais = np.zeros((4096, 1000), dtype=np.int32)  # TODO: fix
+
+                np.save(data_file.replace(".bmp", "_label_ship"), ais)
+
+            if self.land_is_target:
+                try:
+                    land = np.load(data_file.replace(".bmp", "{}.npy".format("_label_land")))
+                except IOError as e:
+                    land = self.data_loader.load_chart_layer(meta_file, 0, 1, radar_index)
+                    np.save(data_file.replace(".bmp", "_label_land"), land)
+
+            if self.filter_land:
+                try:
+                    land = np.load(data_file.replace(".bmp", "{}.npy".format("_label_land_hidden")))
+                except IOError as e:
+                    land = self.data_loader.load_chart_layer(meta_file, 0, 1, radar_index)
+                    hidden_by_land_mask = np.empty(land.shape, dtype=np.uint8)
+                    hidden_by_land_mask[:, 0] = land[:, 0]
+                    for col in range(1, land.shape[1]):
+                        np.bitwise_or(land[:, col], hidden_by_land_mask[:, col - 1], out=hidden_by_land_mask[:, col])
+
+                    np.save(data_file.replace(".bmp", "_label_land_hidden"), hidden_by_land_mask)
+                    land = hidden_by_land_mask
+
+        else:
+            ais = self.data_loader.load_ais_layer(meta_file, 1, radar_index)
+
+            if len(ais) == 0:
+                ais = np.zeros((4096, 1000), dtype=np.int32)  # TODO: fix
+
+            if self.land_is_target or self.filter_land:
+                land = self.data_loader.load_chart_layer(meta_file, 0, 1, radar_index)
+
+                if self.filter_land:
+                    hidden_by_land_mask = np.empty(land.shape, dtype=np.uint8)
+                    hidden_by_land_mask[:, 0] = land[:, 0]
+                    for col in range(1, land.shape[1]):
+                        np.bitwise_or(land[:, col], hidden_by_land_mask[:, col - 1], out=hidden_by_land_mask[:, col])
+
+                    land = hidden_by_land_mask
+
+        if self.filter_land or self.land_is_target:
+            return ais, land
+        else:
+            return ais, None
+
 
 class RadarTest(RadarDatasetFolder):
 
     def __init__(self, root, split='train', transform=False, dataset_name="radartest",
-                 data_range=np.s_[200:3800, 0:1000], cache_labels=True, targets=["ship"], filter_land=True, cfg=None):
-        super(RadarTest, self).__init__(
-            root, split=split, transform=transform, dataset_name=dataset_name,
-            data_range=data_range, cache_labels=cache_labels, targets=targets, filter_land=filter_land, cfg=cfg)
+                 data_ranges=(np.s_[:int(4096/2), 0:2000], np.s_[int(4096/2):, 0:2000]), cache_labels=True, filter_land=True,
+                 land_is_target=False, cfg=None):
+        super(RadarTest, self).__init__(root, split=split, transform=transform, dataset_name=dataset_name,
+            data_ranges=data_ranges, cache_labels=cache_labels, filter_land=filter_land,
+            land_is_target=land_is_target, cfg=cfg)
 
 
-config = osp.expanduser("~/Projects/sensorfusion/logging/preprocess.json")
-valid = RadarTest("/media/stx/LaCie/export/", split="valid", cfg=config)
-train = RadarTest("/media/stx/LaCie/export/", split="train", cfg=config)
-test = [valid, train]
-#print(test.get_class_shares())'
-for dataset in test:
-    for i, fi in enumerate(dataset.files[dataset.split]):
-        junk = dataset[i]
-        print("Cached labels for {} ({}/{})".format(fi, i, len(dataset)))
-#print("get")
-#print(test.get_mean())
-
-
+valid = RadarTest("/media/stx/LaCie1/export/", split="valid")
+b = valid[0]
+print("hei")
