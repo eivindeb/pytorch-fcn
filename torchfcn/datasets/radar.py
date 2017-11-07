@@ -49,7 +49,7 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
         self.split = split
         self._transform = transform
         self.dataset_name = dataset_name
-        self.data_range = data_range
+        self.data_ranges = data_ranges
         self.cache_labels = cache_labels
         self.filter_land = filter_land
         self.targets = targets
@@ -80,7 +80,8 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
             with open(osp.join(datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, self.radar_type, self.split)), "r") as file:
                 for line in file:
                     line = line.strip()
-                    self.files[split].append(line)
+                    line_split = line.split(",")
+                    self.files[split].append([line_split[0], int(line_split[1])])
 
         except:
             print("No index file found for dataset, generating files instead")
@@ -90,35 +91,14 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
         return len(self.files[self.split])
 
     def __getitem__(self, index):
-        def get_cached_label_name(data_range, data_size, targets, land_filtered):
-            label_name = ""
-            if data_range[0].start is None and data_range[0].stop is None and data_range[0].step is None:
-                label_name += "_labels_all"
-            else:
-                label_name += "_labels_{}-{}-{}".format(data_range[0].start if data_range[0].start is not None else 0,
-                                                        data_range[0].step if data_range[0].step is not None else 1,
-                                                        data_range[0].stop if data_range[0].stop is not None else data_size[0])
-            if data_range[1].start is None and data_range[1].stop is None and data_range[1].step is None:
-                label_name += "_all"
-            else:
-                label_name += "_{}-{}-{}".format(data_range[1].start if data_range[1].start is not None else 0,
-                                                data_range[1].step if data_range[1].step is not None else 1,
-                                                data_range[1].stop if data_range[1].stop is not None else data_size[1])
+        data_file = self.files[self.split][index][0]
+        data_range = self.data_ranges[self.files[self.split][index][1]]
 
-            for target in targets:
-                label_name += "_{}".format(target)
-
-            if land_filtered:
-                label_name += "_land-filtered"
-
-            return label_name
-
-        data_file = self.files[self.split][index]
         # load image
         img = self.data_loader.load_image(data_file)
 
         # Construct 3 channel version of image from selected data range
-        img_3ch = np.repeat(img[self.data_range[0], self.data_range[1], np.newaxis], 3, axis=2)
+        img_3ch = np.repeat(img[data_range[0], data_range[1], np.newaxis], 3, axis=2)
 
         # load label
         cached_label_missing = False
@@ -142,10 +122,10 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
             if "land" in self.targets or self.filter_land:
                 land = self.data_loader.load_chart_layer(meta_file, img.shape[1], img.shape[0], 0, 1, 1)[self.data_range]
 
-                lbl[land == 1] = 2 if "land" in self.targets else -1
+        lbl = ais[data_range].astype(dtype=np.int32)
 
-            if cached_label_missing:
-                np.save(data_file.replace(".bmp", get_cached_label_name(self.data_range, img.shape, self.targets, self.filter_land)), lbl)
+        if land is not None:
+            lbl[land[data_range] == 1] = 2 if self.land_is_target else -1
 
         if self._transform:
             return self.transform(img_3ch, lbl)
@@ -190,18 +170,51 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
 
         datasets_dir = osp.join(self.root, "datasets")
         files = collect_data_files_recursively(self.root)
+        print("Found {} data files".format(len(files)))
+
+        filtered_files = []
+
         if remove_files_without_targets:
-            files = [file for i, file in enumerate(files) if not no_targets("{}/{}".format(i, len(files)), file)]
-        random.shuffle(files)
+            last_time = datetime.datetime(year=2000, month=1, day=1)
+            for i, file in enumerate(files):
+                print("Filtering images ({}/{})".format(i, len(files)))
+                file_time = datetime.datetime.strptime(file.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S_%f")
+
+                if file_time - last_time < datetime.timedelta(minutes=self.min_data_interval):
+                    continue
+
+                ais, land = self.get_labels(file)
+
+                if land is not None:
+                    hidden_by_land_mask = np.empty(land.shape, dtype=np.uint8)
+                    hidden_by_land_mask[:, 0] = land[:, 0]
+                    for col in range(1, land.shape[1]):
+                        np.bitwise_or(land[:, col], hidden_by_land_mask[:, col-1], out=hidden_by_land_mask[:, col])
+
+                    if self.cache_labels:
+                        np.save(file.replace(".bmp", "_label_land_hidden"), hidden_by_land_mask)
+
+                    ais[hidden_by_land_mask == 1] = 0
+
+                for j in range(0, len(self.data_ranges)):
+                    if np.max(ais[self.data_ranges[j]]) == 0:
+                        continue
+                    filtered_files.append([file, j])
+                    last_time = file_time
+
+        random.shuffle(filtered_files)
+
         with open(osp.join(datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, self.radar_type, "train")), "w+") as train:
             with open(osp.join(datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, self.radar_type, "valid")), "w+") as valid:
-                for i, filename in enumerate(files):
-                    if i <= len(files)*0.8:
-                        train.write("{}\n".format(filename))
-                        self.files["train"].append(filename)
+                for i, filename in enumerate(filtered_files):
+                    if i <= len(filtered_files)*0.8:
+                        train.write("{},{}\n".format(filename[0], filename[1]))
+                        if self.split == "train":
+                            self.files["train"].append(filename)
                     else:
-                        valid.write("{}\n".format(filename))
-                        self.files["valid"].append(filename)
+                        valid.write("{},{}\n".format(filename[0], filename[1]))
+                        if self.split == "valid":
+                            self.files["valid"].append(filename)
 
     def get_mean(self):
         mean_sum = 0
