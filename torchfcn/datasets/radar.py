@@ -126,18 +126,12 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
         return img, lbl
 
     def generate_dataset_file(self, remove_files_without_targets=True):
-        def no_targets(progress, filename):
-            print("Checking targets for image {}".format(progress))
-            img = self.data_loader.load_image(filename)
-            targets = self.data_loader.load_ais_layer(filename.replace(".bmp", ".json"), img.shape[1], img.shape[0], 1, 1)
-            return len(targets) == 0 or np.max(targets[self.data_range]) == 0
-
         def collect_data_files_recursively(parent, filenames=None):
             if filenames is None:
                 filenames = []
 
             for child in listdir(parent):
-                if re.match("^[0-9-]*$", child) or child == self.radar_type:
+                if re.match("^[0-9-]*$", child) or child in self.radar_type:
                     filenames = collect_data_files_recursively(osp.join(parent, child), filenames)
                 elif child.endswith(".bmp"):
                     filenames.append(osp.join(parent, child))
