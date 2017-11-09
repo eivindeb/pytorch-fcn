@@ -44,7 +44,7 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
 
     def __init__(self, root, split='train', transform=False, dataset_name="radar_base", radar_type=("Radar1", "Radar0"),
                  data_ranges=(np.s_[:, :]), cache_labels=False, filter_land=False,
-                 land_is_target=False, remove_hidden_targets=True, cfg=None):
+                 land_is_target=False, remove_hidden_targets=True, remove_files_without_targets=True, cfg=None):
         self.root = root
         self.radar_type = radar_type
         self.split = split
@@ -72,11 +72,46 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
             if not osp.exists(datasets_dir):
                 makedirs(datasets_dir)
 
-            with open(osp.join(datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, self.radar_type, self.split)), "r") as file:
-                for line in file:
+            with open(osp.join(datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, self.radar_type, self.split)), "w") as file:
+                lines = file.readlines()
+                file_edited = False
+                for line_num, line in enumerate(lines):
+                    line_edited = False
                     line = line.strip()
-                    line_split = line.split(",")
-                    self.files[split].append([line_split[0], int(line_split[1])])
+                    filename, ranges = line.split(";")
+                    ranges_with_targets, ranges_without_targets = ranges.split("/")
+
+                    for i, data_range in enumerate(self.data_ranges):
+                        if str(data_range) in ranges_with_targets or not remove_files_without_targets:
+                            self.files[split].append([filename, i])
+                        elif str(data_range) in ranges_without_targets:
+                            continue
+                        else:
+                            line_edited = True
+                            edit_pos = line.rfind("/")
+
+                            if ais is None:
+                                ais, land = self.get_labels(filename)
+
+                            lbl = ais[data_range].astype(dtype=np.uint8)
+
+                            if land is not None:
+                                lbl[land[data_range] == 1] = 2 if self.land_is_target else 0
+
+                            if np.max(lbl) > 0:
+                                self.files[split].append([filename, i])
+                                line = line[:edit_pos] + str(data_range) + line[edit_pos:]
+                            else:
+                                line = line[:edit_pos + 1] + str(data_range) + line[edit_pos + 1:]
+
+                    if line_edited:
+                        file_edited = True
+                        lines[line_num] = line
+
+                    ais, label = None, None
+
+                if file_edited:
+                    file.writelines(lines)
 
         except:
             print("No index file found for dataset, generating files instead")
@@ -162,27 +197,39 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
                         continue
                     lbl[land == 1] = 2 if self.land_is_target else 0
 
-                    ais[hidden_by_land_mask == 1] = 0
+                ranges_with_targets = []
+                ranges_without_targets = []
 
                 for j in range(0, len(self.data_ranges)):
-                    if np.max(ais[self.data_ranges[j]]) == 0:
-                        continue
-                    filtered_files.append([file, j])
+                    if np.max(lbl[self.data_ranges[j]]) > 0:
+                        ranges_with_targets.append(j)
+                    else:
+                        ranges_without_targets.append(j)
+
+                if len(ranges_with_targets) > 0:
+                    filtered_files.append([file, ranges_with_targets, ranges_without_targets])
                     last_time = file_time
 
         random.shuffle(filtered_files)
 
         with open(osp.join(datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, self.radar_type, "train")), "w+") as train:
             with open(osp.join(datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, self.radar_type, "valid")), "w+") as valid:
-                for i, filename in enumerate(filtered_files):
+                for i, file in enumerate(filtered_files):
+                    checked_ranges = ""
+                    for j in file[1]:
+                        checked_ranges += "".format(self.data_ranges[j])
+                    checked_ranges += "/"
+                    for j in file[2]:
+                        checked_ranges += "".format(self.data_ranges[j])
+
                     if i <= len(filtered_files)*0.8:
-                        train.write("{},{}\n".format(filename[0], filename[1]))
+                        train.write("{};{}\n".format(file[0], checked_ranges))
                         if self.split == "train":
-                            self.files["train"].append(filename)
+                            self.files["train"].append(file)
                     else:
-                        valid.write("{},{}\n".format(filename[0], filename[1]))
+                        valid.write("{};{}\n".format(file[0], checked_ranges))
                         if self.split == "valid":
-                            self.files["valid"].append(filename)
+                            self.files["valid"].append(file)
 
     def get_mean(self):
         mean_sum = 0
@@ -210,56 +257,61 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
                 self.dataset_name, self.radar_type, "train" if self.split == "valid" else "valid")), "r") as file:
             for line in file:
                 line = line.strip()
-                files.append(line.split(","))
+                files.append(line.split(";"))
 
         for i, f in enumerate(files):
             print("Caching labels for file {} of {}".format(i, len(files)))
             ais, land = self.get_labels(f[0])
 
     def get_labels(self, data_file):
-        radar_index = data_file.split("/")[-2][-1]  # Extract radar type from filename e.g. 0 from ../Radar0/filename.bmp
+        radar_index = int(data_file.split("/")[-2][-1])  # Extract radar type from filename e.g. 0 from ../Radar0/filename.bmp
         meta_file = data_file.replace(".bmp", ".json")
+
         if self.cache_labels:
             try:
-                ais = np.load(data_file.replace(".bmp", "{}.npy".format("_label_ship")))
+                ais = np.load(data_file.replace(".bmp", "_label_ship.npy"))
             except IOError as e:
                 ais = self.data_loader.load_ais_layer(meta_file, 1, radar_index)
 
                 if len(ais) == 0:
-                    ais = np.zeros((4096, 1000), dtype=np.int32)  # TODO: fix
-
-                np.save(data_file.replace(".bmp", "_label_ship"), ais)
+                    img = self.data_loader.load_image(data_file)
+                    ais = np.zeros(img.shape, dtype=np.int32)
+                else:
+                    np.save(data_file.replace(".bmp", "_label_ship"), ais)
 
             if self.land_is_target:
                 try:
-                    land = np.load(data_file.replace(".bmp", "{}.npy".format("_label_land")))
+                    land = np.load(data_file.replace(".bmp", "_label_land.npy"))
                 except IOError as e:
                     land = self.data_loader.load_chart_layer(meta_file, 0, 1, radar_index)
-                    np.save(data_file.replace(".bmp", "_label_land"), land)
+                    if len(land) != 0:
+                        np.save(data_file.replace(".bmp", "_label_land"), land)
 
             if self.filter_land:
                 try:
-                    land = np.load(data_file.replace(".bmp", "{}.npy".format("_label_land_hidden")))
+                    land = np.load(data_file.replace(".bmp", "_label_land_hidden.npy"))
                 except IOError as e:
                     land = self.data_loader.load_chart_layer(meta_file, 0, 1, radar_index)
-                    hidden_by_land_mask = np.empty(land.shape, dtype=np.uint8)
-                    hidden_by_land_mask[:, 0] = land[:, 0]
-                    for col in range(1, land.shape[1]):
-                        np.bitwise_or(land[:, col], hidden_by_land_mask[:, col - 1], out=hidden_by_land_mask[:, col])
+                    if len(land) != 0:
+                        hidden_by_land_mask = np.empty(land.shape, dtype=np.uint8)
+                        hidden_by_land_mask[:, 0] = land[:, 0]
+                        for col in range(1, land.shape[1]):
+                            np.bitwise_or(land[:, col], hidden_by_land_mask[:, col - 1], out=hidden_by_land_mask[:, col])
 
-                    np.save(data_file.replace(".bmp", "_label_land_hidden"), hidden_by_land_mask)
-                    land = hidden_by_land_mask
+                        np.save(data_file.replace(".bmp", "_label_land_hidden"), hidden_by_land_mask)
+                        land = hidden_by_land_mask
 
         else:
             ais = self.data_loader.load_ais_layer(meta_file, 1, radar_index)
 
             if len(ais) == 0:
-                ais = np.zeros((4096, 1000), dtype=np.int32)  # TODO: fix
+                img = self.data_loader.load_image(data_file)
+                ais = np.zeros(img.shape, dtype=np.int32)
 
             if self.land_is_target or self.filter_land:
                 land = self.data_loader.load_chart_layer(meta_file, 0, 1, radar_index)
 
-                if self.filter_land:
+                if self.filter_land and len(land) != 0:
                     hidden_by_land_mask = np.empty(land.shape, dtype=np.uint8)
                     hidden_by_land_mask[:, 0] = land[:, 0]
                     for col in range(1, land.shape[1]):
@@ -283,6 +335,6 @@ class RadarTest(RadarDatasetFolder):
             land_is_target=land_is_target, cfg=cfg)
 
 
-valid = RadarTest("/media/stx/LaCie1/export/", split="valid")
-b = valid[0]
-print("hei")
+#valid = RadarTest("/media/stx/LaCie1/export/", split="valid")
+#b = valid[0]
+#print("hei")
