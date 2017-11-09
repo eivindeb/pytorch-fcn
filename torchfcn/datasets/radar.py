@@ -155,14 +155,12 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
 
                 ais, land = self.get_labels(file)
 
-                if land is not None:
-                    hidden_by_land_mask = np.empty(land.shape, dtype=np.uint8)
-                    hidden_by_land_mask[:, 0] = land[:, 0]
-                    for col in range(1, land.shape[1]):
-                        np.bitwise_or(land[:, col], hidden_by_land_mask[:, col-1], out=hidden_by_land_mask[:, col])
+                lbl = ais.astype(dtype=np.uint8)
 
-                    if self.cache_labels:
-                        np.save(file.replace(".bmp", "_label_land_hidden"), hidden_by_land_mask)
+                if land is not None:
+                    if len(land) == 0:
+                        continue
+                    lbl[land == 1] = 2 if self.land_is_target else 0
 
                     ais[hidden_by_land_mask == 1] = 0
 
