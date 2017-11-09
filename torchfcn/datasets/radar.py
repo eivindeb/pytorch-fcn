@@ -181,9 +181,10 @@ class RadarDatasetFolder(data.Dataset):
         filtered_files = []
         filter_stats = {"Time": 0, "No targets": 0}
 
+        sorted_files = sorted(files, key=lambda x: datetime.datetime.strptime(x.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S_%f"))
         if remove_files_without_targets:
             last_time = datetime.datetime(year=2000, month=1, day=1)
-            for i, file in enumerate(files):
+            for i, file in enumerate(sorted_files):
                 print("Filtering images ({}/{})".format(i, len(files)))
                 file_time = datetime.datetime.strptime(file.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S_%f")
 
