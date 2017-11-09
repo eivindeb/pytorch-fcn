@@ -179,6 +179,7 @@ class RadarDatasetFolder(data.Dataset):
         print("Found {} data files".format(len(files)))
 
         filtered_files = []
+        filter_stats = {"Time": 0, "No targets": 0}
 
         if remove_files_without_targets:
             last_time = datetime.datetime(year=2000, month=1, day=1)
@@ -187,6 +188,7 @@ class RadarDatasetFolder(data.Dataset):
                 file_time = datetime.datetime.strptime(file.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S_%f")
 
                 if file_time - last_time < datetime.timedelta(minutes=self.min_data_interval):
+                    filter_stats["Time"] += 1
                     continue
 
                 ais, land = self.get_labels(file)
@@ -210,6 +212,12 @@ class RadarDatasetFolder(data.Dataset):
                 if len(ranges_with_targets) > 0:
                     filtered_files.append([file, ranges_with_targets, ranges_without_targets])
                     last_time = file_time
+                else:
+                    filter_stats["No targets"] += 1
+
+        print("{} data files left after filtering (time: {}, no targets: {})".format(len(filtered_files), filter_stats["Time"], filter_stats["No targets"]))
+
+        print("Writing to index file")
 
         random.shuffle(filtered_files)
 
