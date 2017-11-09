@@ -27,7 +27,8 @@ TODO:
 """
 here = osp.dirname(osp.abspath(__file__))
 
-class RadarDatasetFolder(data.Dataset):  # why not generator-function?
+
+class RadarDatasetFolder(data.Dataset):
 
     class_names = np.array([
         "background",
@@ -72,7 +73,7 @@ class RadarDatasetFolder(data.Dataset):  # why not generator-function?
             if not osp.exists(datasets_dir):
                 makedirs(datasets_dir)
 
-            with open(osp.join(datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, self.radar_type, self.split)), "w") as file:
+            with open(osp.join(datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, self.radar_type, self.split)), "r+") as file:
                 lines = file.readlines()
                 file_edited = False
                 for line_num, line in enumerate(lines):
