@@ -227,19 +227,21 @@ class RadarDatasetFolder(data.Dataset):
                 for i, file in enumerate(filtered_files):
                     checked_ranges = ""
                     for j in file[1]:
-                        checked_ranges += "".format(self.data_ranges[j])
+                        checked_ranges += str(self.data_ranges[j])
                     checked_ranges += "/"
                     for j in file[2]:
-                        checked_ranges += "".format(self.data_ranges[j])
+                        checked_ranges += str(self.data_ranges[j])
 
                     if i <= len(filtered_files)*0.8:
                         train.write("{};{}\n".format(file[0], checked_ranges))
                         if self.split == "train":
-                            self.files["train"].append(file)
+                            for j in file[1]:
+                                self.files["train"].append([file[0], j])
                     else:
                         valid.write("{};{}\n".format(file[0], checked_ranges))
                         if self.split == "valid":
-                            self.files["valid"].append(file)
+                            for j in file[1]:
+                                self.files["valid"].append([file[0], j])
 
     def get_mean(self):
         mean_sum = 0
