@@ -19,10 +19,10 @@ configurations = {
     # https://github.com/shelhamer/fcn.berkeleyvision.org
     1: dict(
         max_iteration=100000,
-        lr=1.0e-10*0.04,
+        lr=1.0e-10*0.04,  # the standard learning rate for VOC images (500x375) multiplied by ratio of radar dataset image size (4096x1000)
         momentum=0.99,
         weight_decay=0.0005,
-        interval_validate=600,
+        interval_validate=1000,
     )
 }
 
