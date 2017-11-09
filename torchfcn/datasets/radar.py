@@ -57,7 +57,7 @@ class RadarDatasetFolder(data.Dataset):
         self.land_is_target = land_is_target
         self.files = collections.defaultdict(list)
         self.remove_hidden_targets = remove_hidden_targets
-        self.min_data_interval = 5
+        self.min_data_interval = 0
         datasets_dir = osp.join(self.root, "datasets")
 
         if land_is_target:
