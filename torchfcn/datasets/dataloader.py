@@ -617,7 +617,7 @@ class data_loader():
         dim_y, dim_x = image_dim[0], image_dim[1]
         im = np.zeros((dim_y, dim_x, 1), dtype=np.uint8)
         x_offset = 0
-        for j in range(len(range_filters)):
+        for j in range(1):
             if j==0:
                 pixels_acc = range_filters[j][1]
             else:
