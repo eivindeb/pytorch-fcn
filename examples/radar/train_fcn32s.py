@@ -109,10 +109,10 @@ def main():
 
     kwargs = {'num_workers': 4, 'pin_memory': True} if cuda else {}
     train_loader = torch.utils.data.DataLoader(
-        torchfcn.datasets.RadarTest(root, split='train', transform=True),
+        torchfcn.datasets.RadarShipTargetFilterLandAndHidden(root, split='train', transform=True),
         batch_size=1, shuffle=True, **kwargs)
     val_loader = torch.utils.data.DataLoader(
-        torchfcn.datasets.RadarTest(
+        torchfcn.datasets.RadarShipTargetFilterLandAndHidden(
             root, split='valid', transform=True),
         batch_size=1, shuffle=False, **kwargs)
 
