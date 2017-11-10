@@ -78,34 +78,30 @@ class RadarDatasetFolder(data.Dataset):
                     line_edited = False
                     line = line.strip()
                     filename, ranges = line.split(";")
-                    if self.remove_files_without_targets:
-                        ranges_with_targets, ranges_without_targets = ranges.split("/")
+                    ranges_with_targets, ranges_without_targets = ranges.split("/")
 
-                        for i, data_range in enumerate(self.data_ranges):
-                            if str(data_range) in ranges_with_targets or not self.remove_files_without_targets:
+                    for i, data_range in enumerate(self.data_ranges):
+                        if not self.remove_files_without_targets or str(data_range) in ranges_with_targets:
+                            self.files[split].append([filename, i])
+                        elif str(data_range) in ranges_without_targets:
+                            continue
+                        else:  # new data range, check for targets in range and write result to index file
+                            line_edited = True
+                            edit_pos = line.rfind("/")
+
+                            if ais is None:
+                                ais, land = self.get_labels(filename)
+
+                            lbl = ais[data_range].astype(dtype=np.uint8)
+
+                            if land is not None:
+                                lbl[land[data_range] == 1] = 2 if self.land_is_target else 0
+
+                            if np.max(lbl) > 0:
                                 self.files[split].append([filename, i])
-                            elif str(data_range) in ranges_without_targets:
-                                continue
-                            else:  # new data range, check for targets in range and write result to index file
-                                line_edited = True
-                                edit_pos = line.rfind("/")
-
-                                if ais is None:
-                                    ais, land = self.get_labels(filename)
-
-                                lbl = ais[data_range].astype(dtype=np.uint8)
-
-                                if land is not None:
-                                    lbl[land[data_range] == 1] = 2 if self.land_is_target else 0
-
-                                if np.max(lbl) > 0:
-                                    self.files[split].append([filename, i])
-                                    line = line[:edit_pos] + str(data_range) + line[edit_pos:]
-                                else:
-                                    line = line[:edit_pos + 1] + str(data_range) + line[edit_pos + 1:]
-                    else:
-                        for i in range(len(self.data_ranges)):
-                            self.files[self.split].append([filename, i])
+                                line = line[:edit_pos] + str(data_range) + line[edit_pos:]
+                            else:
+                                line = line[:edit_pos + 1] + str(data_range) + line[edit_pos + 1:]
 
                     if line_edited:
                         file_edited = True
