@@ -14,6 +14,7 @@ import datetime
 from os import listdir, makedirs
 import re
 import random
+import tqdm
 
 
 """
@@ -78,7 +79,7 @@ class RadarDatasetFolder(data.Dataset):
             with open(osp.join(self.datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, self.radar_type, self.split)), "r+") as file:
                 lines = file.readlines()
                 file_edited = False
-                for line_num, line in enumerate(lines):
+                for line_num, line in tqdm.tqdm(enumerate(lines), total=len(lines), desc="Reading dataset index file"):
                     line_edited = False
                     line = line.strip()
                     filename, ranges = line.split(";")
@@ -187,15 +188,14 @@ class RadarDatasetFolder(data.Dataset):
         filter_stats = {"Time": 0, "No targets": 0}
 
         sorted_files = sorted(files, key=lambda x: datetime.datetime.strptime(x.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S_%f"))
-        if remove_files_without_targets:
-            last_time = datetime.datetime(year=2000, month=1, day=1)
-            for i, file in enumerate(sorted_files):
-                print("Filtering images ({}/{})".format(i, len(files)))
-                file_time = datetime.datetime.strptime(file.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S_%f")
+        last_time = datetime.datetime(year=2000, month=1, day=1)
 
-                if file_time - last_time < datetime.timedelta(minutes=self.min_data_interval):
-                    filter_stats["Time"] += 1
-                    continue
+        for file in tqdm.tqdm(sorted_files, total=len(sorted_files), desc="Filtering data files", leave=False):
+            file_time = datetime.datetime.strptime(file.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S_%f")
+
+            if file_time - last_time < datetime.timedelta(minutes=self.min_data_interval):
+                filter_stats["Time"] += 1
+                continue
 
             if self.remove_files_without_targets:
                 ais, land = self.get_labels(file)
