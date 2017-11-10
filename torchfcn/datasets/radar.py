@@ -19,11 +19,6 @@ import tqdm
 
 """
 TODO:
-- load chart layer and use to set land as unlabeled?
-- choose one data file from each 10 minute block
-- remove targets which are not visible to radar (hidden by land in front). Perform bitwise OR on columns to create mask of everything hidden by land
-- finish caching labels
-- address class imbalance (perhaps in loss function?)
 - modify visualization function (show percentage estimation of class?)
 """
 here = osp.dirname(osp.abspath(__file__))
@@ -36,7 +31,7 @@ class RadarDatasetFolder(data.Dataset):
         "ship",
     ])
 
-    class_weights = np.array([
+    class_weights = np.array([  # based on frequency of targets in data
         1,
         11000,
     ])
@@ -152,7 +147,6 @@ class RadarDatasetFolder(data.Dataset):
             return img_3ch, lbl
 
     def transform(self, img, lbl):
-        # TODO: maybe we have to convert to RGB here?
         img = img.astype(np.float64)
         img -= self.mean_bgr
         img = img.transpose(2, 0, 1)
