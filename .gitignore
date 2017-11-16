@@ -4,4 +4,4 @@
 build/
 dist/
 
-logs/
+*.pth.tar

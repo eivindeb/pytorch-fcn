@@ -22,7 +22,7 @@ configurations = {
         lr=1.0e-10*0.04,  # the standard learning rate for VOC images (500x375) multiplied by ratio of radar dataset image size (4096x1000)
         momentum=0.99,
         weight_decay=0.0005,
-        interval_validate=4916,
+        interval_validate=2,
     )
 }
 
@@ -120,6 +120,8 @@ def main():
         batch_size=1, shuffle=False, **kwargs)
 
     # 2. model
+
+    val_loader.dataset.files["valid"] = val_loader.dataset.files["valid"][0:1]
 
     model = torchfcn.models.FCN32s(n_class=2)
     start_epoch = 0
