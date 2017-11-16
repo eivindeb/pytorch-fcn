@@ -16,6 +16,8 @@ import tqdm
 
 import torchfcn
 
+from git import Repo, Git
+
 
 def cross_entropy2d(input, target, weight=None, size_average=True):
     # input: (n, c, h, w), target: (n, h, w)
@@ -145,6 +147,8 @@ class Trainer(object):
             log = map(str, log)
             f.write(','.join(log) + '\n')
 
+        self.git_push_progress()
+
         mean_iu = metrics[2]
         is_best = mean_iu > self.best_mean_iu
         if is_best:
@@ -226,3 +230,13 @@ class Trainer(object):
             self.train_epoch()
             if self.iteration >= self.max_iter:
                 break
+
+    def git_push_progress(self):
+        repo_dir = osp.expanduser("~/Projects/ntnu-project/ml/pytorch-fcn")
+        repo = Repo(repo_dir)
+        repo.git.checkout("origin/git")
+        repo.git.add([osp.join(self.out, "log.csv")])
+        repo.git.add([osp.join(self.out, "visualization_viz")])
+        repo.git.commit(m="progress commit iteration {}".format(self.iteration))
+        origin = repo.remote("origin")
+        origin.push()

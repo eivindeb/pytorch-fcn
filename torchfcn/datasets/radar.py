@@ -21,6 +21,32 @@ import tqdm
 TODO:
 - modify visualization function (show percentage estimation of class?)
 """
+
+
+class DataRange:
+    def __init__(self, data_range):
+        self.data_range = self.fill_None(data_range)
+
+
+    def in_range(self, data_range):
+        pass
+
+    def fill_None(self, data_range):
+        for axis in data_range:
+            if axis.stop is None:
+                axis.stop = 0
+            if axis.start is None:
+                axis.start = -1
+            if axis.step is None:
+                axis.step = 1
+
+        return data_range
+
+#r = DataRange(np.s_[0:1000, :2000])
+#r.fill_None(r.data_range)
+
+
+
 here = osp.dirname(osp.abspath(__file__))
 
 
@@ -106,11 +132,13 @@ class RadarDatasetFolder(data.Dataset):
 
                     if line_edited:
                         file_edited = True
-                        lines[line_num] = line
+                        lines[line_num] = line+"\n"
 
                     ais, label = None, None
 
                 if file_edited:
+                    file.seek(0)
+                    file.truncate()
                     file.writelines(lines)
 
         except IOError as e:
@@ -323,6 +351,7 @@ class RadarDatasetFolder(data.Dataset):
                             np.bitwise_or(land[:, col], hidden_by_land_mask[:, col - 1], out=hidden_by_land_mask[:, col])
 
                         np.save(data_file.replace(".bmp", "_label_land_hidden"), hidden_by_land_mask)
+                        np.save(data_file.replace(".bmp", "_label_land"), land)
                         land = hidden_by_land_mask
 
         else:
