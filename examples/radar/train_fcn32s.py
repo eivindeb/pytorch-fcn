@@ -105,15 +105,18 @@ def main():
 
     # 1. dataset
 
-    root = "/media/stx/LaCie1/export"  # osp.expanduser('~/data/datasets')
+    #root = "/media/stx/LaCie1/export"
 
-    kwargs = {'num_workers': 4, 'pin_memory': True} if cuda else {}
+    root = osp.expanduser('~/data/datasets/Radar')
+
+    kwargs = {'num_workers': 0, 'pin_memory': True} if cuda else {}
     train_loader = torch.utils.data.DataLoader(
-        torchfcn.datasets.RadarShipTargetFilterLandAndHidden(root, split='train', transform=True),
+        torchfcn.datasets.RadarShipTargetFilterLandAndHidden(
+            root, split='train', transform=True, dataset_name="no_time_filter"),
         batch_size=1, shuffle=True, **kwargs)
     val_loader = torch.utils.data.DataLoader(
         torchfcn.datasets.RadarShipTargetFilterLandAndHidden(
-            root, split='valid', transform=True),
+            root, split='valid', transform=True, dataset_name="no_time_filter"),
         batch_size=1, shuffle=False, **kwargs)
 
     # 2. model
