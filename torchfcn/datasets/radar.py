@@ -33,10 +33,10 @@ class RadarDatasetFolder(data.Dataset):
 
     class_weights = np.array([  # based on frequency of targets in data
         1,
-        11000,
+        14700,
     ])
 
-    mean_bgr = np.array([50.3374548706, 50.3374548706, 50.3374548706])
+    mean_bgr = np.array([58.61890545754149, 58.61890545754149, 58.61890545754149])
     INDEX_FILE_NAME = "{}_{}_{}.txt"
 
     def __init__(self, root, dataset_name, split='train', transform=False, radar_type=("Radar1", "Radar0"),
@@ -350,8 +350,8 @@ class RadarDatasetFolder(data.Dataset):
 
 class RadarShipTargetFilterLandAndHidden(RadarDatasetFolder):
 
-    def __init__(self, root, split='train', transform=False, dataset_name="radartest",
-                 data_ranges=(np.s_[:int(4096/2), 0:2000], np.s_[int(4096/2):, 0:2000]), cache_labels=True,
+    def __init__(self, root, split='train', transform=True, dataset_name="radartest",
+                 data_ranges=(np.s_[:int(4096/3), 0:2000], np.s_[int(4096/3):int(2*4096/3), 0:2000], np.s_[int(2*4096/3):, 0:2000]), cache_labels=True,
                  min_data_interval=0):
 
         super(RadarShipTargetFilterLandAndHidden, self).__init__(root, split=split, transform=transform,
