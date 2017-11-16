@@ -348,6 +348,33 @@ class RadarDatasetFolder(data.Dataset):
         else:
             return ais, None
 
+    def generate_list_of_required_files(self):
+        index_file = self.INDEX_FILE_NAME.format(self.dataset_name, self.radar_type, self.split)
+
+        required_files = index_file.replace(".txt", "_required_files.txt")
+
+        sorted_files = sorted(self.files[self.split], key=lambda x: datetime.datetime.strptime(x[0].split("/")[-1].replace(".bmp", ""),
+                                                                              "%Y-%m-%d-%H_%M_%S_%f"))
+
+        with open(osp.join(self.root, required_files), "w+") as file:
+            last_filename = ""
+            for data_file in sorted_files:
+                data_file = osp.relpath(data_file[0], start=self.root)
+
+                if data_file == last_filename:
+                    continue
+
+                lines = [data_file + "\n", data_file.replace(".bmp", ".json\n"), data_file.replace(".bmp", ".txt\n")]
+                if self.cache_labels:
+                    lines.append(data_file.replace(".bmp", "_label_ship.npy\n"))
+                    if self.land_is_target or (self.filter_land and self.remove_hidden_targets):
+                        lines.append(data_file.replace(".bmp", "_label_land.npy\n"))
+                    if self.remove_hidden_targets:
+                        lines.append(data_file.replace(".bmp", "_label_land_hidden.npy\n"))
+
+                last_filename = data_file
+                file.writelines(lines)
+
 
 class RadarShipTargetFilterLandAndHidden(RadarDatasetFolder):
 
