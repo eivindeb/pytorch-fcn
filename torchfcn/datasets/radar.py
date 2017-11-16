@@ -247,33 +247,30 @@ class RadarDatasetFolder(data.Dataset):
 
     def get_mean(self):
         mean_sum = 0
-        for file in self.files[self.split]:
+        for file in tqdm.tqdm(self.files[self.split], total=len(self.files[self.split]),
+                              desc="Calculating mean for dataset"):
             img = self.data_loader.load_image(file[0])
-            mean_sum += np.mean(img, dtype=np.float64)
+            data_range = self.data_ranges[file[1]]
+            mean_sum += np.mean(img[data_range], dtype=np.float64)
         return mean_sum/len(self.files[self.split])
 
     def get_class_shares(self):
         class_shares = {c: 0 for c in self.class_names}
 
-        filter_land_prev = self.filter_land
-        self.filter_land = False
-
         for i, file in tqdm.tqdm(enumerate(self.files[self.split]), total=len(self.files[self.split]),
                                  desc="Calculating class shares for {} data".format(self.split), leave=False):
-            radar_index = int(file.split("/")[-2][-1])
+            ais, land = self.get_labels(file[0])
+            data_range = self.data_ranges[file[1]]
 
-            ais, land = self.data_loader.load_ais_layer(file.replace(".bmp", ".json"), 1, radar_index)
+            lbl = ais[data_range].astype(dtype=np.uint8)
 
-            for j, data_range in enumerate(self.data_ranges):
-                lbl = ais[data_range].astype(dtype=np.uint8)
+            if land is not None:
+                lbl[land[data_range] == 1] = 2
 
-                if land is not None:
-                    lbl[land[data_range] == 1] = 2
+            for c_index, c in enumerate(self.class_names):
+                class_shares[c] += lbl[lbl == c_index].size/lbl.size
 
-                for c_index, c in enumerate(self.class_names):
-                    class_shares[c] = (class_shares[c] + lbl[lbl == c_index].size/lbl.size)/(2 if i + j != 0 else 1)
-
-        self.filter_land = filter_land_prev
+        class_shares.update({c: class_shares[c]/len(self.files[self.split]) for c in class_shares.keys()})
 
         return class_shares
 
