@@ -311,7 +311,7 @@ class RadarDatasetFolder(data.Dataset):
                     if len(land) != 0:
                         np.save(data_file.replace(".bmp", "_label_land"), land)
 
-            if self.filter_land:
+            if self.filter_land:  # TODO: fix self.remove_hidden_targets (that is, ships) when land is target
                 try:
                     land = np.load(data_file.replace(".bmp", "_label_land_hidden.npy"))
                 except IOError as e:
