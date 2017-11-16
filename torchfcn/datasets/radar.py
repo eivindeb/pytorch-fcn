@@ -74,6 +74,7 @@ class RadarDatasetFolder(data.Dataset):
             with open(osp.join(self.datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, self.radar_type, self.split)), "r+") as file:
                 lines = file.readlines()
                 file_edited = False
+                ais = None
                 for line_num, line in tqdm.tqdm(enumerate(lines), total=len(lines), desc="Reading dataset index file"):
                     line_edited = False
                     line = line.strip()
@@ -82,7 +83,7 @@ class RadarDatasetFolder(data.Dataset):
 
                     for i, data_range in enumerate(self.data_ranges):
                         if not self.remove_files_without_targets or str(data_range) in ranges_with_targets:
-                            self.files[split].append([filename, i])
+                            self.files[split].append([osp.join(self.root, filename), i])
                         elif str(data_range) in ranges_without_targets:
                             continue
                         else:  # new data range, check for targets in range and write result to index file
@@ -90,7 +91,7 @@ class RadarDatasetFolder(data.Dataset):
                             edit_pos = line.rfind("/")
 
                             if ais is None:
-                                ais, land = self.get_labels(filename)
+                                ais, land = self.get_labels(osp.join(self.root, filename))
 
                             lbl = ais[data_range].astype(dtype=np.uint8)
 
@@ -98,7 +99,7 @@ class RadarDatasetFolder(data.Dataset):
                                 lbl[land[data_range] == 1] = 2 if self.land_is_target else 0
 
                             if np.max(lbl) > 0:
-                                self.files[split].append([filename, i])
+                                self.files[split].append([osp.join(self.root, filename), i])
                                 line = line[:edit_pos] + str(data_range) + line[edit_pos:]
                             else:
                                 line = line[:edit_pos + 1] + str(data_range) + line[edit_pos + 1:]
@@ -112,7 +113,8 @@ class RadarDatasetFolder(data.Dataset):
                 if file_edited:
                     file.writelines(lines)
 
-        except:
+        except IOError as e:
+            print(e)
             print("No index file found for dataset, generating files instead")
             self.generate_dataset_file()
 
@@ -230,13 +232,15 @@ class RadarDatasetFolder(data.Dataset):
                     for j in file[2]:
                         checked_ranges += str(self.data_ranges[j])
 
+                    filename = osp.relpath(file[0], start=self.root)
+
                     if i <= len(filtered_files)*0.8:
-                        train.write("{};{}\n".format(file[0], checked_ranges))
+                        train.write("{};{}\n".format(filename, checked_ranges))
                         if self.split == "train":
                             for j in file[1]:
                                 self.files["train"].append([file[0], j])
                     else:
-                        valid.write("{};{}\n".format(file[0], checked_ranges))
+                        valid.write("{};{}\n".format(filename, checked_ranges))
                         if self.split == "valid":
                             for j in file[1]:
                                 self.files["valid"].append([file[0], j])
