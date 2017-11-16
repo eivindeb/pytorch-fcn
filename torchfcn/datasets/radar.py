@@ -388,8 +388,16 @@ class RadarShipTargetFilterLandAndHidden(RadarDatasetFolder):
             min_data_interval=min_data_interval)
 
 
-#valid = RadarShipTargetFilterLandAndHidden("/media/stx/LaCie1/export/", split="valid", dataset_name="no_time_filter")
-#b = valid[0]
+#valid = RadarShipTargetFilterLandAndHidden("/media/stx/LaCie1/export/", split="train", dataset_name="no_time_filter")
+#print(valid.get_mean())
+#valid.generate_list_of_required_files()
 #print("hei")
+#for i in tqdm.tqdm(range(len(valid.files[valid.split])), total=len(valid.files[valid.split])):
+#    img, data = valid[i]
+
+#print("Training set mean: {}".format(train.get_mean()))
+#print("Training set class shares: {}".format(train.get_class_shares()))
+#test = np.load("/media/stx/LaCie1/export/2017-10-25/2017-10-25-17/Radar0/2017-10-25-17_00_02_513_label_land.npy")
+#print(test)
 
 
