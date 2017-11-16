@@ -22,7 +22,7 @@ configurations = {
         lr=1.0e-10*0.04,  # the standard learning rate for VOC images (500x375) multiplied by ratio of radar dataset image size (4096x1000)
         momentum=0.99,
         weight_decay=0.0005,
-        interval_validate=1000,
+        interval_validate=4916,
     )
 }
 
