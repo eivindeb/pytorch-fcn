@@ -15,6 +15,7 @@ from os import listdir, makedirs
 import re
 import random
 import tqdm
+from math import exp
 
 
 """
@@ -163,10 +164,21 @@ class RadarDatasetFolder(data.Dataset):
         data_range = self.data_ranges[self.files[self.split][index][1]]
 
         # load image
-        img = self.data_loader.load_image(data_file)
+        img = self.data_loader.load_image(data_file)[data_range]
 
-        # Construct 3 channel version of image from selected data range
-        img_3ch = np.repeat(img[data_range[0], data_range[1], np.newaxis], 3, axis=2)
+
+        # Construct 3 channel version of image with exponential and linear mask to model noise intensity with range
+        img_3ch = np.empty((img.shape[0], img.shape[1], 3))
+        img_3ch[:, :, 0] = img
+
+        max_val = 255
+        min_val = 0
+        interval_length = max_val - min_val
+        decay_constant = -10 / img.shape[1]
+
+        for col in range(img.shape[1]):
+            img_3ch[:, col, 1] = int(interval_length * exp(decay_constant * col) + min_val)
+            img_3ch[:, col, 2] = int(-((max_val - min_val) / (img.shape[1] - 1)) * col + max_val)
 
         # load label
         ais, land = self.get_labels(data_file)
