@@ -14,6 +14,7 @@ import torch.nn.functional as F
 import tqdm
 
 import torchfcn
+import traceback
 
 from git import Repo, Git
 
@@ -180,7 +181,8 @@ class Trainer(object):
                 try:
                     self.git_push_progress()
                 except Exception as e:
-                    print(e)
+                    with open("git_error.txt", "a") as file:
+                        traceback.print_tb(e.__traceback__, file=file)
                     print("Could not push progress to git")
 
             assert self.model.training
