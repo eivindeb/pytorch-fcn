@@ -122,7 +122,7 @@ def main():
 
     # 2. model
 
-    val_loader.dataset.files["valid"] = val_loader.dataset.files["valid"][0:1]
+    #val_loader.dataset.files["valid"] = val_loader.dataset.files["valid"][0:1]
 
     model = torchfcn.models.FCN32s(n_class=2)
     start_epoch = 0
