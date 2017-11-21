@@ -230,13 +230,14 @@ class RadarDatasetFolder(data.Dataset):
         filtered_files = []
         filter_stats = {"Time": 0, "No targets": 0}
 
-        sorted_files = sorted(files, key=lambda x: datetime.datetime.strptime(x.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S_%f"))
-        last_time = datetime.datetime(year=2000, month=1, day=1)
+        sorted_files = sorted(files, key=lambda x: datetime.datetime.strptime(x.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S"))
+        last_time = {radar_type: datetime.datetime(year=2000, month=1, day=1) for radar_type in self.radar_type}
 
         for file in tqdm.tqdm(sorted_files, total=len(sorted_files), desc="Filtering data files", leave=False):
-            file_time = datetime.datetime.strptime(file.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S_%f")
+            file_time = datetime.datetime.strptime(file.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S")
+            file_radar_type = file.split("/")[-2]
 
-            if file_time - last_time < datetime.timedelta(minutes=self.min_data_interval):
+            if file_time - last_time[file_radar_type] < datetime.timedelta(minutes=self.min_data_interval):
                 filter_stats["Time"] += 1
                 continue
 
@@ -261,7 +262,7 @@ class RadarDatasetFolder(data.Dataset):
 
                 if len(ranges_with_targets) > 0:
                     filtered_files.append([file, ranges_with_targets, ranges_without_targets])
-                    last_time = file_time
+                    last_time[file_radar_type] = file_time
                 else:
                     filter_stats["No targets"] += 1
             else:
@@ -408,7 +409,7 @@ class RadarDatasetFolder(data.Dataset):
         required_files = index_file.replace(".txt", "_required_files.txt")
 
         sorted_files = sorted(self.files[self.split], key=lambda x: datetime.datetime.strptime(x[0].split("/")[-1].replace(".bmp", ""),
-                                                                              "%Y-%m-%d-%H_%M_%S_%f"))
+                                                                              "%Y-%m-%d-%H_%M_%S"))
 
         with open(osp.join(self.root, required_files), "w+") as file:
             last_filename = ""
