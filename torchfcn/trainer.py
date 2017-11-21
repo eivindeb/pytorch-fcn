@@ -87,6 +87,7 @@ class Trainer(object):
         self.best_mean_iu = 0
 
     def validate(self):
+        training = self.model.training
         self.model.eval()
 
         n_class = len(self.val_loader.dataset.class_names)
@@ -135,6 +136,7 @@ class Trainer(object):
             elapsed_time = \
                 datetime.datetime.now(pytz.timezone('Europe/Oslo')) - \
                 self.timestamp_start
+            elapsed_time = elapsed_time.total_seconds()
             log = [self.epoch, self.iteration] + [''] * 5 + \
                   [val_loss] + list(metrics) + [elapsed_time]
             log = map(str, log)
@@ -157,6 +159,9 @@ class Trainer(object):
             shutil.copy(osp.join(self.out, 'checkpoint.pth.tar'),
                         osp.join(self.out, 'model_best.pth.tar'))
 
+        if training:
+            self.model.train()
+
     def train_epoch(self):
         self.model.train()
 
@@ -177,6 +182,8 @@ class Trainer(object):
                 except Exception as e:
                     print(e)
                     print("Could not push progress to git")
+
+            assert self.model.training
 
             if self.cuda:
                 data, target = data.cuda(), target.cuda()
@@ -206,6 +213,7 @@ class Trainer(object):
                 elapsed_time = (
                     datetime.datetime.now(pytz.timezone('Europe/Oslo')) -
                     self.timestamp_start).total_seconds()
+                elapsed_time = elapsed_time.total_seconds()
                 log = [self.epoch, self.iteration] + [loss.data[0]] + \
                     metrics.tolist() + [''] * 5 + [elapsed_time]
                 log = map(str, log)

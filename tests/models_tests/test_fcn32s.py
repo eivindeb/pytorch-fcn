@@ -1,8 +1,11 @@
+# FIXME: Import order causes error:
+# ImportError: dlopen: cannot load any more object with static TL
+# https://github.com/pytorch/pytorch/issues/2083
+import torch
+
 import matplotlib.pyplot as plt
-from nose.tools import assert_true
 import numpy as np
 import skimage.data
-import torch
 
 from torchfcn.models.fcn32s import get_upsampling_weight
 
@@ -30,8 +33,8 @@ def test_get_upsampling_weight():
     y = y.transpose(1, 2, 0)
     dst = y.astype(np.uint8)
 
-    assert_true(abs(src.shape[0] * 2 - dst.shape[0]) <= 2)
-    assert_true(abs(src.shape[1] * 2 - dst.shape[1]) <= 2)
+    assert abs(src.shape[0] * 2 - dst.shape[0]) <= 2
+    assert abs(src.shape[1] * 2 - dst.shape[1]) <= 2
 
     return src, dst
 
