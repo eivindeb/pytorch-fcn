@@ -234,10 +234,10 @@ class Trainer(object):
                 break
 
     def git_push_progress(self):
-        repo_dir = osp.expanduser("~/Projects/ntnu-project/ml/pytorch-fcn")
+        repo_dir = osp.expanduser("~/Projects/ntnu-project/ml/pytorch-fcn/examples/radar/logs")
         repo = Repo(repo_dir)
         repo.index.add([osp.join(self.out, "log.csv")], force=True)
-        repo.index.add([osp.join(self.out, "visualization_viz")], force=True)
+        #repo.index.add([osp.join(self.out, "visualization_viz")], force=True)
         repo.index.commit("progress commit iteration {}".format(self.iteration))
         origin = repo.remote("origin")
         origin.push()
