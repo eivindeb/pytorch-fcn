@@ -147,8 +147,6 @@ class Trainer(object):
             log = map(str, log)
             f.write(','.join(log) + '\n')
 
-        self.git_push_progress()
-
         mean_iu = metrics[2]
         is_best = mean_iu > self.best_mean_iu
         if is_best:
@@ -184,6 +182,11 @@ class Trainer(object):
 
             if self.iteration % self.interval_validate == 0 and self.iteration != 0:
                 self.validate()
+                try:
+                    self.git_push_progress()
+                except Exception as e:
+                    print(e)
+                    print("Could not push progress to git")
 
             assert self.model.training
 
@@ -234,9 +237,8 @@ class Trainer(object):
     def git_push_progress(self):
         repo_dir = osp.expanduser("~/Projects/ntnu-project/ml/pytorch-fcn")
         repo = Repo(repo_dir)
-        repo.git.checkout("origin/git")
-        repo.git.add([osp.join(self.out, "log.csv")])
-        repo.git.add([osp.join(self.out, "visualization_viz")])
-        repo.git.commit(m="progress commit iteration {}".format(self.iteration))
+        repo.index.add([osp.join(self.out, "log.csv")], force=True)
+        repo.index.add([osp.join(self.out, "visualization_viz")], force=True)
+        repo.index.commit("progress commit iteration {}".format(self.iteration))
         origin = repo.remote("origin")
         origin.push()
