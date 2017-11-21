@@ -369,7 +369,14 @@ class RadarDatasetFolder(data.Dataset):
                 try:
                     land = np.load(data_file.replace(".bmp", "_label_land_hidden.npy"))
                 except IOError as e:
-                    land = self.data_loader.load_chart_layer(meta_file, 0, 1, radar_index)
+                    if not self.land_is_target:
+                        try:
+                            land = np.load(data_file.replace(".bmp", "_label_land.npy"))
+                        except IOError as e:
+                            land = self.data_loader.load_chart_layer(meta_file, 0, 1, radar_index)
+                            if len(land) != 0:
+                                np.save(data_file.replace(".bmp", "_label_land"), land)
+
                     if len(land) != 0:
                         hidden_by_land_mask = np.empty(land.shape, dtype=np.uint8)
                         hidden_by_land_mask[:, 0] = land[:, 0]
@@ -377,7 +384,6 @@ class RadarDatasetFolder(data.Dataset):
                             np.bitwise_or(land[:, col], hidden_by_land_mask[:, col - 1], out=hidden_by_land_mask[:, col])
 
                         np.save(data_file.replace(".bmp", "_label_land_hidden"), hidden_by_land_mask)
-                        np.save(data_file.replace(".bmp", "_label_land"), land)
                         land = hidden_by_land_mask
 
         else:
