@@ -71,7 +71,7 @@ class RadarDatasetFolder(data.Dataset):
                  land_is_target=False, remove_hidden_targets=True, min_data_interval=0,
                  remove_files_without_targets=True, label_folder=""):
         self.root = root
-        self.radar_type = radar_type
+        self.radar_type = radar_type  # TODO: fix printing when not tuple
         self.split = split
         self._transform = transform
         self.dataset_name = dataset_name
@@ -155,7 +155,7 @@ class RadarDatasetFolder(data.Dataset):
 
         except IOError as e:
             print(e)
-            print("No index file found for dataset, generating files instead")
+            print("No index file found for dataset, generating index for dataset instead")
             self.generate_dataset_file()
 
     def __len__(self):
