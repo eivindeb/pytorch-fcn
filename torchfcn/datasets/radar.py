@@ -103,11 +103,13 @@ class RadarDatasetFolder(data.Dataset):
 
         self.data_loader = data_loader(self.root, sensor_config=osp.join(here, "dataloader.json"))
 
+        # TODO: fix path connections between location of dataset index,and data files and labels
+
         try:
             if not osp.exists(self.datasets_dir):
                 makedirs(self.datasets_dir)
 
-            with open(osp.join(self.datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, self.radar_type, self.split)), "r+") as file:
+            with open(osp.join(self.datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, "-".join(self.radar_type), self.split)), "r+") as file:
                 lines = file.readlines()
                 file_edited = False
                 ais = None
@@ -271,8 +273,8 @@ class RadarDatasetFolder(data.Dataset):
 
         random.shuffle(filtered_files)
 
-        with open(osp.join(self.datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, self.radar_type, "train")), "w+") as train:
-            with open(osp.join(self.datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, self.radar_type, "valid")), "w+") as valid:
+        with open(osp.join(self.datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, "-".join(self.radar_type), "train")), "w+") as train:
+            with open(osp.join(self.datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, "-".join(self.radar_type), "valid")), "w+") as valid:
                 for i, file in enumerate(filtered_files):
                     checked_ranges = ""
                     for j in file[1]:
@@ -327,7 +329,7 @@ class RadarDatasetFolder(data.Dataset):
         files = self.files[self.split]
 
         with open(osp.join(self.datasets_dir, self.INDEX_FILE_NAME.format(
-                self.dataset_name, self.radar_type, "train" if self.split == "valid" else "valid")), "r") as file:
+                self.dataset_name, "-".join(self.radar_type), "train" if self.split == "valid" else "valid")), "r") as file:
             for line in file:
                 line = line.strip()
                 files.append(line.split(";"))
@@ -401,7 +403,7 @@ class RadarDatasetFolder(data.Dataset):
             return ais, None
 
     def generate_list_of_required_files(self):
-        index_file = self.INDEX_FILE_NAME.format(self.dataset_name, self.radar_type, self.split)
+        index_file = self.INDEX_FILE_NAME.format(self.dataset_name, "-".join(self.radar_type), self.split)
 
         required_files = index_file.replace(".txt", "_required_files.txt")
 
