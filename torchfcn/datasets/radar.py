@@ -487,27 +487,40 @@ class RadarDatasetFolder(data.Dataset):
 
 class RadarShipTargetFilterLandAndHidden(RadarDatasetFolder):
 
-    def __init__(self, root, data_folder, split='train', transform=True, dataset_name="radartest",
+    def __init__(self, root, data_folder, split='train', transform=True, dataset_name="radartest", label_folder="",
                  data_ranges=(np.s_[:int(4096/3), 0:2000], np.s_[int(4096/3):int(2*4096/3), 0:2000], np.s_[int(2*4096/3):, 0:2000]), cache_labels=True,
-                 min_data_interval=2):
+                 min_data_interval=0.1, remove_files_without_targets = True):
 
         super(RadarShipTargetFilterLandAndHidden, self).__init__(root, data_folder=data_folder,
-            split=split, transform=transform,
+            split=split, transform=transform, label_folder=label_folder,
             dataset_name=dataset_name, data_ranges=data_ranges, cache_labels=cache_labels, filter_land=True,
-            land_is_target=False, remove_hidden_targets=True, remove_files_without_targets=True,
+            land_is_target=False, remove_hidden_targets=True, remove_files_without_targets=remove_files_without_targets,
             min_data_interval=min_data_interval)
 
 
-#valid = RadarShipTargetFilterLandAndHidden("/data/polarlys/", data_folder="/mnt/nas/", split="train", dataset_name="every_second_minute")
-#print(valid.get_mean())
-#valid.generate_list_of_required_files()
-#print("hei")
-#for i in tqdm.tqdm(range(len(valid.files[valid.split])), total=len(valid.files[valid.split])):
-#    img, data = valid[i]
+if __name__ == "__main__":
+    from dataloader import data_loader
 
-#print("Training set mean: {}".format(train.get_mean()))
-#print("Training set class shares: {}".format(train.get_class_shares()))
-#test = np.load("/media/stx/LaCie1/export/2017-10-25/2017-10-25-17/Radar0/2017-10-25-17_00_02_513_label_land.npy")
-#print(test)
+    #np.s_[:int(4096/3), 0:2000], np.s_[int(4096/3):int(2*4096/3), 0:2000], np.s_[int(2*4096/3):, 0:2000]
+    valid = RadarShipTargetFilterLandAndHidden("/data/polarlys", data_folder="/nas0/", label_folder="/data/polarlys/labels/", split="train", dataset_name="final")
+
+    print(valid.get_mean())
+    mean_cols = valid.get_mean_of_columns()
+    np.savetxt("column_sum_new.txt", mean_cols)
+
+    class_shares = valid.get_class_shares()
+    print(class_shares)
+    print("hei")
+    #valid.generate_list_of_required_files()
+    #print("hei")
+    #for i in tqdm.tqdm(range(len(valid.files[valid.split])), total=len(valid.files[valid.split])):
+    #    img, data = valid[i]
+
+    #print("Training set mean: {}".format(train.get_mean()))
+    #print("Training set class shares: {}".format(train.get_class_shares()))
+    #test = np.load("/media/stx/LaCie1/export/2017-10-25/2017-10-25-17/Radar0/2017-10-25-17_00_02_513_label_land.npy")
+    #print(test)
+else:
+    from .dataloader import data_loader
 
 
