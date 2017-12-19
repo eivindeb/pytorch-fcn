@@ -183,12 +183,12 @@ class Trainer(object):
 
             if self.iteration % self.interval_validate == 0 and self.iteration != 0:
                 self.validate()
-                try:
-                    self.git_push_progress()
-                except Exception as e:
-                    with open("git_error.txt", "a") as file:
-                        traceback.print_tb(e.__traceback__, file=file)
-                    print("Could not push progress to git")
+                #try:
+                #    self.git_push_progress()
+                #except Exception as e:
+                #    with open("git_error.txt", "a") as file:
+                #        traceback.print_tb(e.__traceback__, file=file)
+                #    print("Could not push progress to git")
 
             assert self.model.training
 
