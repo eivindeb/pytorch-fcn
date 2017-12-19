@@ -107,22 +107,25 @@ def main():
 
     #root = "/media/stx/LaCie1/export"
 
-    root = osp.expanduser('~/data/datasets/Radar')
-    data_folder = root
+    #root = osp.expanduser('~/data/datasets/Radar')
+    root = "/data/polarlys"
+
+    data_folder = "/nas0/"
+    #data_folder = root
 
     kwargs = {'num_workers': 0, 'pin_memory': True} if cuda else {}
     train_loader = torch.utils.data.DataLoader(
         torchfcn.datasets.RadarShipTargetFilterLandAndHidden(
-            root, data_folder=data_folder, split='train', transform=True, dataset_name="no_time_filter"),
+            root, data_folder=data_folder, label_folder=osp.join(root, "labels"), split='train', transform=True, cache_labels=True, dataset_name="final"),
         batch_size=1, shuffle=True, **kwargs)
     val_loader = torch.utils.data.DataLoader(
         torchfcn.datasets.RadarShipTargetFilterLandAndHidden(
-            root, data_folder=data_folder, split='valid', transform=True, dataset_name="no_time_filter"),
+            root, data_folder=data_folder, label_folder=osp.join(root, "labels"), split='valid', transform=True, cache_labels=True, dataset_name="final", min_data_interval=0),
         batch_size=1, shuffle=False, **kwargs)
 
     # 2. model
 
-    #val_loader.dataset.files["valid"] = val_loader.dataset.files["valid"][0:1]
+    #val_loader.dataset.files["valid"] = val_loader.dataset.files["valid"][0:900]
 
     model = torchfcn.models.FCN32s(n_class=2)
     start_epoch = 0
