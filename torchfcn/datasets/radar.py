@@ -9,9 +9,8 @@ import PIL.Image
 import scipy.io
 import torch
 from torch.utils import data
-from .dataloader import data_loader
 import datetime
-from os import listdir, makedirs
+from os import listdir, makedirs, remove
 import re
 import random
 import tqdm
@@ -21,6 +20,10 @@ from math import exp
 """
 TODO:
 - modify visualization function (show percentage estimation of class?)
+- make data loader continually check for new files from nas
+- move datasetfolder to root argument, write label and data folder to config file maybe along with parameters
+- calculate mean bgr in generate dataset and write to config
+- finish DataRange class or find smarter way to write what parts of image has targets
 """
 
 
@@ -60,16 +63,18 @@ class RadarDatasetFolder(data.Dataset):
 
     class_weights = np.array([  # based on frequency of targets in data
         1,
-        10000,
+        5000,
     ])
 
-    mean_bgr = np.array([58.61890545754149, 58.61890545754149, 58.61890545754149])
+    # mean_bgr = np.array([55.9, 55.9, 56])
+    mean_bgr = np.array([55.1856378125, 55.1856378125, 53.8775])
     INDEX_FILE_NAME = "{}_{}_{}.txt"
+    LABELS = {"background": 0, "ais": 1, "land": 2, "hidden": 3, "unlabeled": -1}
 
     def __init__(self, root, dataset_name, data_folder, split='train', transform=False, radar_type=("Radar1", "Radar0"),
                  data_ranges=(np.s_[:, :]), cache_labels=False, filter_land=False,
                  land_is_target=False, remove_hidden_targets=True, min_data_interval=0,
-                 remove_files_without_targets=True, label_folder=""):
+                 remove_files_without_targets=True, label_folder="", skip_processed_files=True, use_magnitude_mask=True):
         self.root = root
         self.radar_type = radar_type  # TODO: fix printing when not tuple
         self.split = split
@@ -82,17 +87,13 @@ class RadarDatasetFolder(data.Dataset):
         self.files = collections.defaultdict(list)
         self.remove_hidden_targets = remove_hidden_targets
         self.remove_files_without_targets = remove_files_without_targets
+        self.skip_processed_files = skip_processed_files
         self.min_data_interval = min_data_interval
+        self.use_magnitude_mask = use_magnitude_mask
         self.data_folder = data_folder
         self.label_folder = label_folder if label_folder != "" else osp.join(self.root, "labels")
         if not osp.exists(self.label_folder):
             makedirs(self.label_folder)
-
-        for r_type in radar_type:
-            if not osp.exists(osp.join(self.label_folder, r_type)):
-                makedirs(osp.join(self.label_folder, r_type))
-
-        self.datasets_dir = osp.join(self.root, "datasets")
 
         if land_is_target:
             if filter_land:
@@ -104,54 +105,75 @@ class RadarDatasetFolder(data.Dataset):
         self.data_loader = data_loader(self.root, sensor_config=osp.join(here, "dataloader.json"))
 
         # TODO: fix path connections between location of dataset index,and data files and labels
-
         try:
-            if not osp.exists(self.datasets_dir):
-                makedirs(self.datasets_dir)
-
-            with open(osp.join(self.datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, "-".join(self.radar_type), self.split)), "r+") as file:
+            with open(osp.join(self.root, self.INDEX_FILE_NAME.format(self.dataset_name, "-".join(self.radar_type), self.split)), "r+") as file:
                 lines = file.readlines()
                 file_edited = False
-                ais = None
+                lbl = None
                 for line_num, line in tqdm.tqdm(enumerate(lines), total=len(lines), desc="Reading dataset index file"):
                     line_edited = False
                     line = line.strip()
                     filename, ranges = line.split(";")
                     ranges_with_targets, ranges_without_targets = ranges.split("/")
 
-                    for i, data_range in enumerate(self.data_ranges):
-                        if not self.remove_files_without_targets or str(data_range) in ranges_with_targets:
-                            self.files[split].append([osp.join(self.data_folder, filename), i])
-                        elif str(data_range) in ranges_without_targets:
-                            continue
-                        else:  # new data range, check for targets in range and write result to index file
-                            line_edited = True
-                            edit_pos = line.rfind("/")
+                    #img = self.data_loader.load_image(osp.join(self.data_folder, filename))
 
-                            if ais is None:
-                                ais, land = self.get_labels(filename)
+                    #if img is None:  # temporary
+                    #    line_edited = True
+                    #    line = "removed"
+                    if False:
+                        pass
+                    else:
+                        for i, data_range in enumerate(self.data_ranges):
+                            if not self.remove_files_without_targets or str(data_range) in ranges_with_targets:
+                                self.files[split].append({"data": [osp.join(self.data_folder, filename), i],
+                                                          "label": osp.join(self.label_folder, filename.replace(".bmp", "_label.npy"))})
+                            elif str(data_range) in ranges_without_targets:
+                                continue
+                            else:  # new data range, check for targets in range and write result to index file
+                                line_edited = True
+                                edit_pos = line.rfind("/")
 
-                            lbl = ais[data_range].astype(dtype=np.uint8)
+                                if lbl is None:
+                                    lbl = self.get_label(osp.join(self.data_folder, filename),
+                                                         osp.join(self.label_folder, filename.replace(".bmp", "_label.npy")))
 
-                            if land is not None:
-                                lbl[land[data_range] == 1] = 2 if self.land_is_target else 0
-
-                            if np.max(lbl) > 0:
-                                self.files[split].append([osp.join(self.data_folder, filename), i])
-                                line = line[:edit_pos] + str(data_range) + line[edit_pos:]
-                            else:
-                                line = line[:edit_pos + 1] + str(data_range) + line[edit_pos + 1:]
+                                if np.any(lbl[data_range] == self.LABELS["ais"]):
+                                    self.files[split].append({"data": [osp.join(self.data_folder, filename), i],
+                                                              "label": osp.join(self.label_folder, filename.replace(".bmp", "_label.npy"))})
+                                    line = line[:edit_pos] + str(data_range) + line[edit_pos:]
+                                else:
+                                    line = line[:edit_pos + 1] + str(data_range) + line[edit_pos + 1:]
 
                     if line_edited:
                         file_edited = True
                         lines[line_num] = line+"\n"
 
-                    ais, label = None, None
+                    lbl = None
 
                 if file_edited:
                     file.seek(0)
                     file.truncate()
+                    lines = [line for line in lines if line != "removed"]
                     file.writelines(lines)
+
+            if self.min_data_interval > 0:
+                self.files[self.split] = sorted(self.files[self.split], key=lambda x: datetime.datetime.strptime(x["data"][0].split("/")[-1].replace(".bmp", ""),
+                                                                               "%Y-%m-%d-%H_%M_%S"))
+                last_time = {radar_type: datetime.datetime(year=2000, month=1, day=1) for radar_type in self.radar_type}
+
+                new_files = []
+
+                for file_info in self.files[self.split]:
+                    file = file_info["data"][0]
+                    file_time = datetime.datetime.strptime(file.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S")
+                    file_radar_type = file.split("/")[-2]
+
+                    if file_time - last_time[file_radar_type] > datetime.timedelta(minutes=self.min_data_interval):
+                        last_time[file_radar_type] = file_time
+                        new_files.append(file_info)
+
+                self.files[self.split] = new_files
 
         except IOError as e:
             print(e)
@@ -162,33 +184,31 @@ class RadarDatasetFolder(data.Dataset):
         return len(self.files[self.split])
 
     def __getitem__(self, index):
-        data_file = self.files[self.split][index][0]
-        data_range = self.data_ranges[self.files[self.split][index][1]]
+        data_path = self.files[self.split][index]["data"][0]
+        data_range = self.data_ranges[self.files[self.split][index]["data"][1]]
 
         # load image
-        img = self.data_loader.load_image(data_file)[data_range]
+        img = self.data_loader.load_image(data_path)[data_range]
 
-
-        # Construct 3 channel version of image with exponential and linear mask to model noise intensity with range
         img_3ch = np.empty((img.shape[0], img.shape[1], 3))
         img_3ch[:, :, 0] = img
+        img_3ch[:, :, 1] = img
 
-        max_val = 255
-        min_val = 0
-        interval_length = max_val - min_val
-        decay_constant = -10 / img.shape[1]
+        if self.use_magnitude_mask:
+            max_val = 255
+            min_val = 0
+            interval_length = max_val - min_val
+            decay_constant = -10 / img.shape[1]
 
-        for col in range(img.shape[1]):
-            img_3ch[:, col, 1] = int(interval_length * exp(decay_constant * col) + min_val)
-            img_3ch[:, col, 2] = int(-((max_val - min_val) / (img.shape[1] - 1)) * col + max_val)
+            for col in range(img.shape[1]):
+                # img_3ch[:, col, 1] = int(interval_length * exp(decay_constant * col) + min_val)
+                # img_3ch[:, col, 2] = int(-((max_val - min_val) / (img.shape[1] - 1)) * col + max_val)
+                img_3ch[:, col, 2] = int(222.3 * exp(-0.03332 * col) + 72.35 * exp(-0.0003524 * col))
+        else:
+            img_3ch[:, :, 2] = img
 
         # load label
-        ais, land = self.get_labels(data_file)
-
-        lbl = ais[data_range].astype(dtype=np.int32)
-
-        if land is not None:
-            lbl[land[data_range] == 1] = 2 if self.land_is_target else -1
+        lbl = self.get_label(data_path, self.files[self.split][index]["label"])[data_range]
 
         if self._transform:
             return self.transform(img_3ch, lbl)
@@ -196,6 +216,7 @@ class RadarDatasetFolder(data.Dataset):
             return img_3ch, lbl
 
     def transform(self, img, lbl):
+        # Construct 3 channel version of image with exponential and linear mask to model noise intensity with range
         img = img.astype(np.float64)
         img -= self.mean_bgr
         img = img.transpose(2, 0, 1)
@@ -231,42 +252,69 @@ class RadarDatasetFolder(data.Dataset):
         filter_stats = {"Time": 0, "No targets": 0}
 
         sorted_files = sorted(files, key=lambda x: datetime.datetime.strptime(x.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S"))
-        last_time = {radar_type: datetime.datetime(year=2000, month=1, day=1) for radar_type in self.radar_type}
+        sorted_files = sorted_files[302000:]
 
-        for file in tqdm.tqdm(sorted_files, total=len(sorted_files), desc="Filtering data files", leave=False):
-            file_time = datetime.datetime.strptime(file.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S")
-            file_radar_type = file.split("/")[-2]
 
-            if file_time - last_time[file_radar_type] < datetime.timedelta(minutes=self.min_data_interval):
-                filter_stats["Time"] += 1
-                continue
+        with open(osp.join(self.root, "processed_files.txt"), "r+") as processed_files_index:
+            lines = processed_files_index.readlines()
+            files_without_targets = [f.rstrip("\n") for f in lines if f.split(";")[1] == "false\n"]
+            files_with_targets = [f.rstrip("\n") for f in lines if f.split(";")[1] == "true\n"]
 
-            if self.remove_files_without_targets:
-                ais, land = self.get_labels(file)
-
-                lbl = ais.astype(dtype=np.uint8)
-
-                if land is not None:
-                    if len(land) == 0:
+            #last_processed = lines[-1].rstrip("\n").split(";")[0].replace(".bmp", "")
+            #last_processed_time = datetime.datetime.strptime(last_processed, "%Y-%m-%d-%H_%M_%S")
+            last_time = {radar_type: datetime.datetime(year=2000, month=1, day=1) for radar_type in self.radar_type}
+            for file in tqdm.tqdm(sorted_files, total=len(sorted_files), desc="Filtering data files", leave=False):
+                try:
+                    if self.skip_processed_files and (self.remove_files_without_targets and file in files_without_targets or file in files_with_targets):
                         continue
-                    lbl[land == 1] = 2 if self.land_is_target else 0
 
-                ranges_with_targets = []
-                ranges_without_targets = []
+                    file_time = datetime.datetime.strptime(file.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S")
+                    file_radar_type = file.split("/")[-2]
 
-                for j in range(0, len(self.data_ranges)):
-                    if np.max(lbl[self.data_ranges[j]]) > 0:
-                        ranges_with_targets.append(j)
+                    if file_time - last_time[file_radar_type] < datetime.timedelta(minutes=self.min_data_interval):
+                        filter_stats["Time"] += 1
+                        continue
+
+                    img = self.data_loader.load_image(file)
+
+                    if img is None or type(img) == "list":  # temporary
+                        continue
+
+                    if self.remove_files_without_targets:
+                        if file in files_without_targets:
+                            continue
+
+                        lbl = self.get_label(file, file.replace(self.data_folder, self.label_folder).replace(".bmp", "_label.npy"))
+
+                        ranges_with_targets = []
+                        ranges_without_targets = []
+
+                        for j in range(0, len(self.data_ranges)):
+                            if np.any(lbl[self.data_ranges[j]] == self.LABELS["ais"]):
+                                ranges_with_targets.append(j)
+                            else:
+                                ranges_without_targets.append(j)
+
+                        if len(ranges_with_targets) > 0:
+                            filtered_files.append([file, ranges_with_targets, ranges_without_targets])
+                            last_time[file_radar_type] = file_time
+                            processed_files_index.write("{};true\n".format(file))
+                        else:
+                            processed_files_index.write("{};false\n".format(file))
+                            files_without_targets.append(file)
+
+                            label_path = file.replace(self.data_folder, self.label_folder).replace(".bmp", "_label.npy")
+                            remove(label_path)
+
+                            filter_stats["No targets"] += 1
                     else:
-                        ranges_without_targets.append(j)
-
-                if len(ranges_with_targets) > 0:
-                    filtered_files.append([file, ranges_with_targets, ranges_without_targets])
-                    last_time[file_radar_type] = file_time
-                else:
-                    filter_stats["No targets"] += 1
-            else:
-                filtered_files.append([file, self.data_ranges])
+                        filtered_files.append([file, self.data_ranges])
+                except Exception as e:  # temporary
+                    print("An error occurred in processing of image {}, skipping".format(file))
+                    print(e)
+                    processed_files_index.write("{};false\n".format(file))
+                    files_without_targets.append(file)
+                    continue
 
         print("{} data files left after filtering (time: {}, no targets: {})".format(len(filtered_files), filter_stats["Time"], filter_stats["No targets"]))
 
@@ -274,8 +322,8 @@ class RadarDatasetFolder(data.Dataset):
 
         random.shuffle(filtered_files)
 
-        with open(osp.join(self.datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, "-".join(self.radar_type), "train")), "w+") as train:
-            with open(osp.join(self.datasets_dir, self.INDEX_FILE_NAME.format(self.dataset_name, "-".join(self.radar_type), "valid")), "w+") as valid:
+        with open(osp.join(self.root, self.INDEX_FILE_NAME.format(self.dataset_name, "-".join(self.radar_type), "train")), "w+") as train:
+            with open(osp.join(self.root, self.INDEX_FILE_NAME.format(self.dataset_name, "-".join(self.radar_type), "valid")), "w+") as valid:
                 for i, file in enumerate(filtered_files):
                     checked_ranges = ""
                     for j in file[1]:
@@ -284,26 +332,50 @@ class RadarDatasetFolder(data.Dataset):
                     for j in file[2]:
                         checked_ranges += str(self.data_ranges[j])
 
-                    filename = osp.relpath(file[0], start=self.root)
+                    file_rel_path = osp.relpath(file[0], start=self.data_folder)
+                    label_path = osp.join(self.label_folder, file_rel_path).replace(".bmp", "_label.npy")
 
                     if i <= len(filtered_files)*0.8:
-                        train.write("{};{}\n".format(filename, checked_ranges))
+                        train.write("{};{}\n".format(file_rel_path, checked_ranges))
                         if self.split == "train":
                             for j in file[1]:
-                                self.files["train"].append([file[0], j])
+                                self.files["train"].append({"data": [file[0], j],
+                                                           "label": label_path})
                     else:
-                        valid.write("{};{}\n".format(filename, checked_ranges))
+                        valid.write("{};{}\n".format(file_rel_path, checked_ranges))
                         if self.split == "valid":
                             for j in file[1]:
-                                self.files["valid"].append([file[0], j])
+                                self.files["valid"].append({"data": [file[0], j],
+                                                           "label": label_path})
 
     def get_mean(self):
         mean_sum = 0
+        missing_files = []
         for file in tqdm.tqdm(self.files[self.split], total=len(self.files[self.split]),
                               desc="Calculating mean for dataset"):
+            file = file["data"]
             img = self.data_loader.load_image(file[0])
-            data_range = self.data_ranges[file[1]]
-            mean_sum += np.mean(img[data_range], dtype=np.float64)
+            if img is not None:
+                data_range = self.data_ranges[file[1]]
+                mean_sum += np.mean(img[data_range], dtype=np.float64)
+            else:
+                missing_files.append(file[0])
+        return mean_sum/(len(self.files[self.split]) - len(missing_files))
+
+    def get_mean_of_columns(self):
+        mean_sum = np.zeros((1, 2000))
+        missing_files = []
+
+        for file in tqdm.tqdm(self.files[self.split], total=len(self.files[self.split]),
+                              desc="Calculating mean for columns of dataset"):
+            file = file["data"]
+            img = self.data_loader.load_image(file[0])
+            if img is not None:
+                data_range = self.data_ranges[file[1]]
+                mean_sum += np.mean(img[data_range], axis=0, dtype=np.float64)
+            else:
+                missing_files.append(file[0])
+
         return mean_sum/len(self.files[self.split])
 
     def get_class_shares(self):
@@ -311,13 +383,10 @@ class RadarDatasetFolder(data.Dataset):
 
         for i, file in tqdm.tqdm(enumerate(self.files[self.split]), total=len(self.files[self.split]),
                                  desc="Calculating class shares for {} data".format(self.split), leave=False):
-            ais, land = self.get_labels(file[0])
+            lbl_path = file["label"]
+            file = file["data"]
+            lbl = self.get_label(file[0], lbl_path)[:, 0:2000]
             data_range = self.data_ranges[file[1]]
-
-            lbl = ais[data_range].astype(dtype=np.uint8)
-
-            if land is not None:
-                lbl[land[data_range] == 1] = 2
 
             for c_index, c in enumerate(self.class_names):
                 class_shares[c] += lbl[lbl == c_index].size/lbl.size
@@ -329,7 +398,7 @@ class RadarDatasetFolder(data.Dataset):
     def collect_and_cache_labels(self):
         files = self.files[self.split]
 
-        with open(osp.join(self.datasets_dir, self.INDEX_FILE_NAME.format(
+        with open(osp.join(self.root, self.INDEX_FILE_NAME.format(
                 self.dataset_name, "-".join(self.radar_type), "train" if self.split == "valid" else "valid")), "r") as file:
             for line in file:
                 line = line.strip()
@@ -337,64 +406,35 @@ class RadarDatasetFolder(data.Dataset):
 
         for i, f in enumerate(files):
             print("Caching labels for file {} of {}".format(i, len(files)))
-            ais, land = self.get_labels(f[0])
+            ais, land = self.get_label(f[0])
 
-    def get_labels(self, data_file):
-        radar_type = data_file.split("/")[-2]
-        radar_index = int(radar_type[-1])  # Extract radar type from filename e.g. 0 from ../Radar0/filename.bmp
-        meta_file = data_file.replace(".bmp", ".json")
-        data_file = osp.join(osp.join(self.label_folder, radar_type), osp.basename(data_file))
+    def get_label(self, data_path, label_path):
+        cached_label_missing = False
 
         if self.cache_labels:
             try:
-                ais = np.load(data_file.replace(".bmp", "_label_ship.npy"))
+                label = np.load(label_path).astype(np.int32)
             except IOError as e:
-                ais = self.data_loader.load_ais_layer(meta_file, 1, radar_index)
+                cached_label_missing = True
 
-                if len(ais) == 0:
-                    img = self.data_loader.load_image(data_file)
-                    ais = np.zeros(img.shape, dtype=np.int32)
-                else:
-                    np.save(data_file.replace(".bmp", "_label_ship"), ais)
-
-            if self.land_is_target:
-                try:
-                    land = np.load(data_file.replace(".bmp", "_label_land.npy"))
-                except IOError as e:
-                    land = self.data_loader.load_chart_layer(meta_file, 0, 1, radar_index)
-                    if len(land) != 0:
-                        np.save(data_file.replace(".bmp", "_label_land"), land)
-
-            if self.filter_land:  # TODO: fix self.remove_hidden_targets (that is, ships) when land is target
-                try:
-                    land = np.load(data_file.replace(".bmp", "_label_land_hidden.npy"))
-                except IOError as e:
-                    if not self.land_is_target:
-                        try:
-                            land = np.load(data_file.replace(".bmp", "_label_land.npy"))
-                        except IOError as e:
-                            land = self.data_loader.load_chart_layer(meta_file, 0, 1, radar_index)
-                            if len(land) != 0:
-                                np.save(data_file.replace(".bmp", "_label_land"), land)
-
-                    if len(land) != 0:
-                        hidden_by_land_mask = np.empty(land.shape, dtype=np.uint8)
-                        hidden_by_land_mask[:, 0] = land[:, 0]
-                        for col in range(1, land.shape[1]):
-                            np.bitwise_or(land[:, col], hidden_by_land_mask[:, col - 1], out=hidden_by_land_mask[:, col])
-
-                        np.save(data_file.replace(".bmp", "_label_land_hidden"), hidden_by_land_mask)
-                        land = hidden_by_land_mask
-
-        else:
-            ais = self.data_loader.load_ais_layer(meta_file, 1, radar_index)
+        if not self.cache_labels or cached_label_missing:
+            ais = self.data_loader.load_ais_layer_by_basename(osp.splitext(data_path)[0])
 
             if len(ais) == 0:
-                img = self.data_loader.load_image(data_file)
-                ais = np.zeros(img.shape, dtype=np.int32)
+                img = self.data_loader.load_image(data_path)
+                if len(img) == 0 or img is None:
+                    label = np.zeros((4096, 3400), dtype=np.int32)
+                else:
+                    label = np.zeros(img.shape, dtype=np.int32)
+            else:
+                label = ais.astype(np.int8)
 
             if self.land_is_target or self.filter_land:
-                land = self.data_loader.load_chart_layer(meta_file, 0, 1, radar_index)
+                try:
+                    land = np.load(label_path.replace(".npy", "_land.npy"))
+                except:
+                    land = self.data_loader.load_chart_layer_by_basename(osp.splitext(data_path)[0], 0)
+                label[land == 1] = self.LABELS["land"]
 
                 if self.filter_land and len(land) != 0:
                     hidden_by_land_mask = np.empty(land.shape, dtype=np.uint8)
@@ -402,12 +442,20 @@ class RadarDatasetFolder(data.Dataset):
                     for col in range(1, land.shape[1]):
                         np.bitwise_or(land[:, col], hidden_by_land_mask[:, col - 1], out=hidden_by_land_mask[:, col])
 
-                    land = hidden_by_land_mask
+                    label[(hidden_by_land_mask == 1) & (land == 0)] = self.LABELS["hidden"]
 
-        if self.filter_land or self.land_is_target:
-            return ais, land
-        else:
-            return ais, None
+            if cached_label_missing:
+                if not osp.exists(osp.dirname(label_path)):
+                    makedirs(osp.dirname(label_path))
+                np.save(label_path, label.astype(np.int8))
+
+        if self.filter_land:
+            label[(label == self.LABELS["land"]) | (label == self.LABELS["hidden"])] = self.LABELS["unlabeled"]
+
+        elif not self.land_is_target:
+            label[label == self.LABELS["land"]] = self.LABELS["background"]
+
+        return label
 
     def generate_list_of_required_files(self):
         index_file = self.INDEX_FILE_NAME.format(self.dataset_name, "-".join(self.radar_type), self.split)
