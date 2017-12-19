@@ -15,20 +15,18 @@ import json
 import numpy as np
 import math
 from skimage.draw import polygon, line
-from PIL import Image
 from io import BytesIO
 import requests
-import glob
 import copy
 import traceback
+from PIL import Image
 
 opencv = False
 try: 
     import cv2
     opencv = True
-    print('data_loader: OpenCV found')
 except:
-    print('data_loader: OpenCV not found')
+    from PIL import Image
 
 # format string for the folder name (date + hour)
 FOLDER_NAME_FORMAT = os.path.join("{:%Y-%m-%d", "%Y-%m-%d-%H}")
@@ -37,6 +35,11 @@ FOLDER_NAME_FORMAT = os.path.join("{:%Y-%m-%d", "%Y-%m-%d-%H}")
 FILE_NAME_FORMAT_SEC = "{:%Y-%m-%d-%H_%M_%S}"
 FILE_NAME_FORMAT_MIN = "{:%Y-%m-%d-%H_%M}"
 
+RADAR_RANGE_FILTERS_DEFAULT = [[1, 2000], [2, 1000], [4, 1000], [6, 1000], [8, 1000], [8, 216], [0, 262143], [0, 262143]]
+RADAR_M_PER_SAMPLE_DEFAULT = 3.4067
+
+EARTH_RADIUS = 6367000
+                     
 class data_loader():
     """
     Class for reading images and labels from Seatex Polarlys dataset.
@@ -50,7 +53,6 @@ class data_loader():
 
         self.CHART_POLAR = 0
         self.CHART_CART = 1
-        self.EARTH_RADIUS = 6367000
         
         try:
             with open(sensor_config, 'r') as f:
@@ -59,8 +61,10 @@ class data_loader():
             self.sensor_config = None
             print('data_loader: Unable to read configuration file {}'.format(sensor_config))
         
+        
     def change_path(self, path):
         self.path = path
+        
         
     def get_filename_sec(self, t, sensor_path, extension):
         """
@@ -73,40 +77,18 @@ class data_loader():
         path_sec = os.path.join(path_sec,sensor_path)
         path_sec = os.path.join(path_sec,filename_sec)
         
-        file = glob.glob(path_sec+'*.'+extension)
-        if len(file) > 0:
-            file = file[0]
-        else:
-            file = None
-            
-        return file
-    
-    
-    def get_filename_min(self, t, sensor_path, extension):
-        """
-        Function for getting a list of file names for a specific minute
-        """
-        folder = FOLDER_NAME_FORMAT.format(t)
-        filename_min = FILE_NAME_FORMAT_SEC.format(t)
-        
-        path_min = os.path.join(self.path, folder)
-        path_min = os.path.join(path_min,sensor_path)
-        path_min = os.path.join(path_min,filename_min)
-        
-        file = glob.glob(filename_min+'*.'+extension)
-            
-        return file
+        return path_sec + '.' + extension
     
     
     def get_sensor_from_path(self, sensor_path):
-        sensor_type, sensor_index, subsensor_index = None
+        sensor_type, sensor_index, subsensor_index = None, None, None
         if sensor_path.find('Cam') >= 0:
             sensor_type = self.TYPE_CAMERA
-            sensor_index = int(sensor_path.find('Cam') + 1)
-            subsensor_index = int(sensor_path.find('Lens') + 1)
+            sensor_index = int(sensor_path[sensor_path.find('Cam') + 3])
+            subsensor_index = int(sensor_path[sensor_path.find('Lens') + 4])
         elif sensor_path.find('Radar') >= 0:
             sensor_type = self.TYPE_RADAR
-            sensor_index = int(sensor_path.find('Cam') + 1)
+            sensor_index = int(sensor_path[sensor_path.find('Radar') + 5])
             
         return sensor_type, sensor_index, subsensor_index
         
@@ -122,6 +104,8 @@ class data_loader():
     
     
     def get_sensor_config(self, sensor_type, sensor_index, subsensor_index=None):
+        with open('dataloader.json', 'r') as f:
+            self.sensor_config = json.load(f)
         cfg = {}
         if sensor_type == self.TYPE_CAMERA:
             sensor_str = 'Cam{}'.format(sensor_index)
@@ -144,9 +128,18 @@ class data_loader():
         return ext
     
  
+    def get_basename(self, t, sensor_type, sensor_index, subsensor_index=None):
+        folder = FOLDER_NAME_FORMAT.format(t)
+        filename_sec = FILE_NAME_FORMAT_SEC.format(t)
+        
+        path_sensor = os.path.join(folder, self.get_sensor_folder(sensor_type, sensor_index, subsensor_index))
+        path_sec = os.path.join(path_sensor, filename_sec)
+        
+        return os.path.join(self.path, path_sec)
+    
+    
     def load_image(self, file_name):
-        #print('data_loader: load image {} from path {}'.format(file_name, self.path))
-        if not file_name:
+        if not file_name or not os.path.isfile(file_name):
             return []
         
         image = []
@@ -185,6 +178,9 @@ class data_loader():
        
   
     def load_chart_layer(self, file_meta, chart_transform, sensor_type, sensor_index, subsensor_index=None):
+        if not file_meta or not os.path.isfile(file_meta):
+            return []
+        
         try:
             with open(file_meta, 'r') as f:
                 meta = json.load(f)
@@ -230,13 +226,18 @@ class data_loader():
     
     
     def load_chart_layer_by_time(self, t, chart_transform, sensor_type, sensor_index, subsensor_index=None):
-        file_meta = self.get_filename_sec(t, self.get_sensor_folder(sensor_type, sensor_index, subsensor_index), 'json')                
+        file_meta = self.get_filename_sec(t, self.get_sensor_folder(sensor_type, sensor_index, subsensor_index), 'json')  
+        if file_meta == None:
+            return []                
         layer = self.load_chart_layer(file_meta, chart_transform, sensor_type, sensor_index, subsensor_index)
         
         return layer
     
     
     def load_ais_layer(self, file_meta, sensor_type, sensor_index, subsensor_index=None):
+        if not file_meta or not os.path.isfile(file_meta):
+            return []
+        
         try:
             with open(file_meta, 'r') as f:
                 meta = json.load(f)
@@ -247,6 +248,7 @@ class data_loader():
         try:
             meta['config'] = self.get_sensor_config(sensor_type, sensor_index, subsensor_index)
             meta['Seapath'] = self.sensor_config['Seapath']
+            meta['AIS'] = self.sensor_config['AIS']
         except:
             print('data_loader: Required sensor configuration is missing')
             return []
@@ -258,7 +260,7 @@ class data_loader():
                 ais_targets = {} 
                 for k,v in targets.items():
                     ais_targets[k] = targets[k].copy()
-                    self.transform_ais_target(meta['own_vessel'], ais_targets[k], meta['config'], meta['Seapath']['navref_height']) 
+                    self.transform_ais_target(ais_targets[k], meta['own_vessel'], meta['config'], meta['Seapath']['navref_height'], meta['AIS']) 
                 layer = self.get_polygon_layer(ais_targets, meta['config'], meta['image_dim'])
             elif sensor_type == self.TYPE_RADAR:
                 targets_start = meta['targets_ais_start']
@@ -266,11 +268,11 @@ class data_loader():
                 ais_targets_start = {}
                 for k,v in targets_start.items():
                     ais_targets_start[k] = targets_start[k].copy()
-                    self.transform_ais_target(meta['own_vessel_start'], ais_targets_start[k], meta['config'], meta['Seapath']['navref_height']) 
+                    self.transform_ais_target(ais_targets_start[k], meta['own_vessel_start'], meta['config'], meta['Seapath']['navref_height'], meta['AIS']) 
                 ais_targets_end = {}
                 for k,v in targets_end.items():
                     ais_targets_end[k] = targets_end[k].copy()
-                    self.transform_ais_target(meta['own_vessel_end'], ais_targets_end[k], meta['config'], meta['Seapath']['navref_height'])
+                    self.transform_ais_target(ais_targets_end[k], meta['own_vessel_end'], meta['config'], meta['Seapath']['navref_height'], meta['AIS'])
                 ais_targets = self.radar_interpolate_targets(ais_targets_start, ais_targets_end)
                 layer = self.get_polygon_layer(ais_targets, meta['config'], meta['image_dim'], meta['radar_setup']['range_filters'])
             else:
@@ -293,13 +295,62 @@ class data_loader():
     
     
     def load_ais_layer_by_time(self, t, sensor_type, sensor_index, subsensor_index=None):
-        file_meta = self.get_filename_sec(t, self.get_sensor_folder(sensor_type, sensor_index, subsensor_index), 'json')                
+        file_meta = self.get_filename_sec(t, self.get_sensor_folder(sensor_type, sensor_index, subsensor_index), 'json')
+        if file_meta == None:
+            return []               
         return self.load_ais_layer(file_meta, sensor_type, sensor_index, subsensor_index)
     
     
     def load_arpa_layer(self, file_meta, sensor_type, sensor_index, subsensor_index=None):
-        print('data_loader: load_arpa_layer() is not implemented')
-        return []
+        if not file_meta or not os.path.isfile(file_meta):
+            return []
+        
+        try:
+            with open(file_meta, 'r') as f:
+                meta = json.load(f)
+        except:
+            print('data_loader: Unable to read meta data file {}'.format(file_meta))
+            return []
+      
+        try:
+            meta['config'] = self.get_sensor_config(sensor_type, sensor_index, subsensor_index)
+            meta['Seapath'] = self.sensor_config['Seapath']
+            meta['ARPA'] = self.sensor_config['ARPA']
+        except:
+            print('data_loader: Required sensor configuration is missing')
+            return []
+        
+        layer = []
+        try:
+            if sensor_type == self.TYPE_CAMERA:
+                targets = meta['targets_arpa']
+                arpa_targets = {} 
+                for k,v in targets.items():
+                    arpa_targets[k] = targets[k].copy()
+                    self.transform_arpa_target(arpa_targets[k], meta['own_vessel'], meta['config'], meta['ARPA'], meta['Seapath']['navref_height']) 
+                layer = self.get_polygon_layer(arpa_targets, meta['config'], meta['image_dim'])
+            elif sensor_type == self.TYPE_RADAR:
+                targets_start = meta['targets_arpa_start']
+                targets_end = meta['targets_arpa_end']
+                arpa_targets_start = {}
+                for k,v in targets_start.items():
+                    arpa_targets_start[k] = targets_start[k].copy()
+                    self.transform_arpa_target(arpa_targets_start[k], meta['own_vessel_start'], meta['config'], meta['ARPA'], meta['Seapath']['navref_height']) 
+                arpa_targets_end = {}
+                for k,v in targets_end.items():
+                    arpa_targets_end[k] = targets_end[k].copy()
+                    self.transform_arpa_target(arpa_targets_end[k], meta['own_vessel_end'], meta['config'], meta['ARPA'], meta['Seapath']['navref_height'])
+                arpa_targets = self.radar_interpolate_targets(arpa_targets_start, arpa_targets_end)
+                layer = self.get_polygon_layer(arpa_targets, meta['config'], meta['image_dim'], meta['radar_setup']['range_filters'])
+            else:
+                print('data_loader: Unknown sensor type {}'.format(sensor_type))
+        except:
+            traceback.print_stack()
+            print('--------------')
+            traceback.print_exc()
+            print('--------------')
+            
+        return layer
     
   
     def load_arpa_layer_by_basename(self, file_basename):
@@ -307,15 +358,20 @@ class data_loader():
         file_basename must contain full path, eg. '2017-10-13\2017-10-13-15\Cam0\Lens1\2017-10-13-15_08_50_470000'
         """
         sensor_type, sensor_index, subsensor_index = self.get_sensor_from_path(file_basename)          
-        return self.load_ais_layer(os.path.join(self.path, file_basename) + '.json', sensor_type, sensor_index, subsensor_index)
+        return self.load_arpa_layer(os.path.join(self.path, file_basename) + '.json', sensor_type, sensor_index, subsensor_index)
     
     
     def load_arpa_layer_by_time(self, t, sensor_type, sensor_index, subsensor_index=None):
-        file_meta = self.get_filename_sec(t, self.get_sensor_folder(sensor_type, sensor_index, subsensor_index), 'json')                
+        file_meta = self.get_filename_sec(t, self.get_sensor_folder(sensor_type, sensor_index, subsensor_index), 'json')
+        if file_meta == None:
+            return []                
         return self.load_arpa_layer(file_meta, sensor_type, sensor_index, subsensor_index)
     
     
     def load_horizon_layer(self, file_meta, sensor_type, sensor_index, subsensor_index=None):
+        if not file_meta or not os.path.isfile(file_meta):
+            return []
+        
         try:
             with open(file_meta, 'r') as f:
                 meta = json.load(f)
@@ -354,11 +410,245 @@ class data_loader():
     
     
     def load_horizon_layer_by_time(self, t, sensor_type, sensor_index, subsensor_index=None):
-        file_meta = self.get_filename_sec(t, self.get_sensor_folder(sensor_type, sensor_index, subsensor_index), 'json')                
+        file_meta = self.get_filename_sec(t, self.get_sensor_folder(sensor_type, sensor_index, subsensor_index), 'json')
+        if file_meta == None:
+            return []               
         return self.load_horizon_layer(file_meta, sensor_type, sensor_index, subsensor_index)
     
     
+    def transform_points(self, points, att, from_sensor_type, to_sensor_type, from_sensor_index, to_sensor_index, from_subsensor_index=None, to_subsensor_index=None):
+        """
+        Transform points in pixel coordinates (X,Y) from one sensor frame to another. Assumes that points are in the sea plane.
+        The argument 'points' should be a numpy array of shape (n,2), where n is the number of points.
+        The argument 'from_subsensor_index' is only required if 'from_sensor_type' is TYPE_CAMERA.
+        The argument 'to_subsensor_index' is only required if 'to_sensor_type' is TYPE_CAMERA.
+        The methods returns a numpy array of shape (n,2), where n is the number of input points.
+        If a point falls outside the image boundaries, the coordinates for this points are set to -1.
+        """
+        if from_sensor_type == self.TYPE_CAMERA:
+            points = self.transform_points_from_camera(points, att, from_sensor_index, from_subsensor_index)
+        elif from_sensor_type == self.TYPE_RADAR:
+            points = self.transform_points_from_radar(points, att, from_sensor_index)
+        
+        if to_sensor_type == self.TYPE_CAMERA:
+            points = self.transform_points_to_camera(points, att, to_sensor_index, to_subsensor_index)
+        elif to_sensor_type == self.TYPE_RADAR:
+            points = self.transform_points_to_radar(points, att, to_sensor_index)
+            
+        return points
+        
+    
+    def transform_points_from_camera(self, points, att, from_sensor_index, from_subsensor_index, ref_location=None, dim_x=1920, dim_y=2560):
+        """
+        Transform numpy array of camera image pixel coordinates (X,Y) to points in meters in (N,E,D) geographic frame. Assumes that points are in the sea plane.
+        The argument 'points' should be a numpy array of shape (n,2), where n is the number of points.
+        The argument 'ref_location' is the offset from the Seapath reference point to the reference 
+        point to be used for the returned points in meters and vessel body coordinates (fwd,stb,dwn). 
+        If 'ref_location' is None, returned points are relative to Seapath reference point.
+        If argument 'dim_x' is None, default radar image height 1920 is used.
+        If argument 'dim_y' is None, default radar image width 2560 is used.
+        The methods returns a numpy array of shape (n,3), where n is the number of input points.
+        If a point is pointing above the horizon, the coordinates for this points are set to (0,0,0).
+        """
+        cfg_sensor = self.get_sensor_config(self.TYPE_CAMERA, from_sensor_index, from_subsensor_index)
+        
+        # Get camera calibration
+        camera_matrix = np.array(cfg_sensor['camera_matrix']).reshape((3,3))
+        dist_coeffs = np.array(cfg_sensor['distortion_coefficients'])
+        
+        # Get rotation matrices
+        R_ma = self.rot_matrix_from_euler(cfg_sensor['rotation'])
+        R_att = self.rot_matrix_from_euler(att)       
+        #print(cfg_sensor['rotation'])
+        #R_ma = self.rot_matrix_from_euler((0,-17.95,0))
+        # Get translation vector
+        T = np.array(cfg_sensor['location']).reshape(3,1)
+        if ref_location is not None:
+            T -= np.array(ref_location).reshape(3,1)
+         
+        # Get reference point height above sea level given attitude
+        hgt = self.sensor_config['Seapath']['navref_height']
+        if ref_location is not None:
+            hgt -= ref_location[2]
+        hgt_att = R_att.transpose().dot(np.array((0, 0, hgt)).reshape((3,1)))[2]
+        
+        p_transformed = np.zeros((points.shape[0], 3)).astype(np.float64)
+        for i in range(points.shape[0]):
+            # Convert pixel coordinates to normalized coordinates by applying camera calibration
+            yn, zn = self.camera_p2m(points[i,1], points[i,0], camera_matrix, dist_coeffs)   
+            
+            # Check diff in z for x==1m
+            pn = np.array((1, yn, zn)).reshape(3,1)
+            pn_geog = R_att.dot(R_ma.dot(pn))
+            if(pn_geog[2] < 0):
+                # Not at sea level
+                p_transformed[i,:] = 0
+            else:
+                # Calculate distance x to sea sea plane
+                x = (hgt_att - R_att.dot(T)[2]) / pn_geog[2]
+                # Convert normalized coordinates to cartesian
+                p = np.array((x, x*yn, x*zn)).reshape(3,1)
+                # Rotate and translate to reference point
+                p_geog = R_att.dot(R_ma.dot(p) + T)
+                p_transformed[i,:] = p_geog.reshape(1,3)
+   
+        return p_transformed
+    
+    
+    def transform_points_from_radar(self, points, att, from_sensor_index, range_filters=None, ref_location=None, dim_x=4096):
+        """
+        Transform numpy array of radar image pixel coordinates (X,Y) to points in meters in (N,E,D) geographic frame. Assumes that points are in the sea plane.
+        The argument 'points' should be a numpy array of shape (n,2), where n is the number of points.
+        If the argument 'range_filters' is None, default radar range filters are used.
+        The argument 'ref_location' is the offset from the Seapath reference point to the reference 
+        point to be used for the returned points in meters and vessel body coordinates (fwd,stb,dwn). 
+        If 'ref_location' is None, returned points are relative to Seapath reference point.
+        If argument 'dim_x' is None, default radar image height 4096 is used.
+        The methods returns a numpy array of shape (n,3), where n is the number of input points.
+        """
+        cfg_sensor = self.get_sensor_config(self.TYPE_RADAR, from_sensor_index)
+        
+        if range_filters is None:
+            range_filters = RADAR_RANGE_FILTERS_DEFAULT
+        
+        # Get rotation matrices
+        R_ma = self.rot_matrix_from_euler(cfg_sensor['rotation'])
+        R_att = self.rot_matrix_from_euler(att)       
+        
+        # Get translation vector
+        T = np.array(cfg_sensor['location']).reshape(3,1)
+        if ref_location is not None:
+            T -= np.array(ref_location).reshape(3,1)
+         
+        # Get reference point height above sea level given attitude
+        hgt = self.sensor_config['Seapath']['navref_height']
+        if ref_location is not None:
+            hgt -= ref_location[2]
+        hgt_att = R_att.transpose().dot(np.array((0, 0, hgt)).reshape((3,1)))[2] 
+        
+        p_transformed = np.zeros((points.shape[0], 3)).astype(np.float64)
+        for i in range(points.shape[0]):
+            rng = self.radar_p2m([points[i,1]], range_filters, cfg_sensor['m_per_sample'])
+            brg = 360 * (1 - points[i,0] / dim_x)
+            
+            # Iterate to get correct z in sensor frame
+            hgt_error = 1000
+            z = -self.sensor_config['Seapath']['navref_height'] - cfg_sensor['location'][2]
+            while abs(hgt_error) > 0.1:
+                dst = math.sqrt(rng**2 - z**2)
+                x = dst * math.cos(brg * math.pi / 180)
+                y = dst * math.sin(brg * math.pi / 180)
+                p = np.array((x,y,z)).reshape(3,1)
+                p_geog = R_att.dot(R_ma.dot(p) + T)
+                hgt_error = hgt_att + p_geog[2]
+                z -= hgt_error
+            
+            p_geog[2] = -hgt_att
+            p_transformed[i,:] = p_geog.reshape(1,3)
+            
+        return p_transformed
+    
+    
+    def transform_points_to_camera(self, points, att, to_sensor_index, to_subsensor_index, ref_location=None, dim_x=1920, dim_y=2560):
+        """
+        Transform points in meters in (N,E,D) geographic frame to pixels coordinates (X,Y) in camera image.
+        The argument 'points' should be a numpy array of shape (n,3), where n is the number of points.
+        The argument 'ref_location' is the offset from the Seapath reference point to the reference 
+        point used for the input points in meters and vessel body coordinates (fwd,stb,dwn). If None, the offset is 
+        assumed to be (0,0,0).
+        If argument 'dim_x' is None, default radar image height 1920 is used.
+        If argument 'dim_y' is None, default radar image width 2560 is used.
+        The methods returns a numpy array of shape (n,2), where n is the number of input points.
+        If a point falls outside the image boundaries, the coordinates for this points are set to -1.
+        """       
+        cfg_sensor = self.get_sensor_config(self.TYPE_CAMERA, to_sensor_index, to_subsensor_index)  
+        
+        # Get rotation matrices
+        R_ma = self.rot_matrix_from_euler(cfg_sensor['rotation']).transpose()
+        R_att = self.rot_matrix_from_euler(att).transpose()
+        
+        # Get translation vector
+        T = np.array(cfg_sensor['location']).reshape(3,1)
+        if ref_location is not None:
+            T -= np.array(ref_location).reshape(3,1)
+        
+        # Get camera calibration
+        camera_matrix = np.array(cfg_sensor['camera_matrix']).reshape((3,3))
+        dist_coeffs = np.array(cfg_sensor['distortion_coefficients'])
+                    
+        p_transformed = np.zeros((points.shape[0], 2)).astype(np.int16)
+        for i in range(points.shape[0]):
+            p = points[i,:].reshape((3,1))
+            
+            # Translate and rotate target pos vector to sensor frame
+            p_vessel = R_att.dot(p)
+            p_sensor = R_ma.dot(p_vessel - T)
+
+            # Convert to pixels by applying camera calibration
+            y, x = self.camera_m2p(p_sensor[1], p_sensor[2], p_sensor[0], camera_matrix, dist_coeffs)
+                    
+            p_transformed[i,0] = np.round(x)
+            p_transformed[i,1] = np.round(y)
+            if p_sensor[0] < 0 or p_transformed[i,0] >= dim_x or p_transformed[i,1] >= dim_y:
+                p_transformed[i,:] = -1
+                           
+        return p_transformed
+    
+    
+    def transform_points_to_radar(self, points, att, to_sensor_index, ref_location=None, range_filters=None, dim_x=4096, dim_y=3400):
+        """
+        Transform points in meters in (N,E,D) geographic frame to pixels coordinates (X,Y) in radar image.
+        Assumes that points are relative to Seapath reference point.
+        The argument 'points' should be a numpy array of shape (n,3), where n is the number of points.
+        The argument 'ref_location' is the offset from the Seapath reference point to the reference 
+        point used for the input points in meters and vessel body coordinates (fwd,stb,dwn). If None, the offset is 
+        assumed to be (0,0,0).
+        If the argument 'range_filters' is None, default radar range filters are used.
+        If argument 'dim_x' is None, default radar image height 4096 is used.
+        If argument 'dim_y' is None, default radar image width 4300 is used.
+        The methods returns a numpy array of shape (n,2), where n is the number of input points.
+        If a point falls outside the image boundaries, the coordinates for this points are set to -1.
+        """
+        cfg_sensor = self.get_sensor_config(self.TYPE_RADAR, to_sensor_index)  
+        
+        if range_filters is None:
+            range_filters = RADAR_RANGE_FILTERS_DEFAULT
+            
+        # Get rotation matrices
+        R_ma = self.rot_matrix_from_euler(cfg_sensor['rotation']).transpose()
+        R_att = self.rot_matrix_from_euler(att).transpose()
+        
+        # Get translation vector
+        T = np.array(cfg_sensor['location']).reshape(3,1)
+        if ref_location is not None:
+            T -= np.array(ref_location).reshape(3,1)
+            
+        p_transformed = np.zeros((points.shape[0], 2)).astype(np.int16)
+        for i in range(points.shape[0]):
+            p = points[i,:].reshape((3,1))
+            
+            # Translate and rotate target pos vector to sensor frame
+            p_vessel = R_att.dot(p)
+            p_sensor = R_ma.dot(p_vessel - T)
+        
+            # Calc bearing and range
+            rng = math.sqrt(p_sensor[0]**2 + p_sensor[1]**2 + p_sensor[2]**2)
+            brg = math.atan2(p_sensor[1], p_sensor[0]) * 180 / math.pi
+            if brg < 0.0:
+                brg += 360
+                
+            p_transformed[i,0] = 0.5 + dim_x - (dim_x/360.0) * brg
+            p_transformed[i,1] = 0.5 + self.radar_m2p([rng], range_filters, cfg_sensor['m_per_sample'])
+            if p_transformed[i,1] >= dim_y:
+                p_transformed[i,:] = -1
+                           
+        return p_transformed
+        
+    
     def get_metadata(self, file_meta):
+        if not file_meta or not os.path.isfile(file_meta):
+            return {}
+        
         meta = {}
         try:
             with open(file_meta, 'r') as f:
@@ -377,7 +667,9 @@ class data_loader():
     
     
     def get_metadata_by_time(self, t, sensor_type, sensor_index, subsensor_index=None):
-        file_meta = self.get_filename_sec(t, self.get_sensor_folder(sensor_type, sensor_index, subsensor_index), 'json')                
+        file_meta = self.get_filename_sec(t, self.get_sensor_folder(sensor_type, sensor_index, subsensor_index), 'json')
+        if file_meta == None:
+            return {}              
         return self.get_metadata(file_meta)
     
     
@@ -391,15 +683,14 @@ class data_loader():
         height_above_sea_level = pos_sensor[2]
         
         # Get distance to horizon
-        dist_to_horizon = np.sqrt(2 * self.EARTH_RADIUS * height_above_sea_level + height_above_sea_level**2)     
+        dist_to_horizon = np.sqrt(2 * EARTH_RADIUS * height_above_sea_level + height_above_sea_level**2)     
         
         # Get additional height caused by earth curvature
-        dhgt = math.sqrt(self.EARTH_RADIUS**2 + dist_to_horizon**2) - self.EARTH_RADIUS
+        dhgt = math.sqrt(EARTH_RADIUS**2 + dist_to_horizon**2) - EARTH_RADIUS
 
         # Get rotation matrices
         R_ma = self.rot_matrix_from_euler(cfg['rotation']).transpose()
         R_att = self.rot_matrix_from_euler(pva['attitude']).transpose()
-
         camera_matrix = np.array(cfg['camera_matrix']).reshape((3,3))
         dist_coeffs = np.array(cfg['distortion_coefficients'])
         
@@ -407,8 +698,9 @@ class data_loader():
         points = list()
         for i in range(numb):
             step = 360/numb
-            x = dist_to_horizon * np.cos(i * step * np.pi / 180)
-            y = dist_to_horizon * np.sin(i * step * np.pi / 180)
+            start = pva['attitude'][2] + cfg['rotation'][2] - 180
+            x = dist_to_horizon * np.cos((start + i * step) * np.pi / 180)
+            y = dist_to_horizon * np.sin((start + i * step) * np.pi / 180)
             z = height_above_sea_level + dhgt
             p = np.array([x, y, z]).reshape((3,1))
             p_vessel = R_att.dot(p)
@@ -416,7 +708,7 @@ class data_loader():
             
             # Azimuth relative to sensor location and orientation
             azimuth = np.arctan2(p_sensor[1], p_sensor[0]) * 180 / np.pi
-            if np.abs(azimuth) < 40:
+            if np.abs(azimuth) < 45:
                 # Convert to pixels by applying camera calibration
                 x, y = self.camera_m2p(p_sensor[1], p_sensor[2], p_sensor[0], camera_matrix, dist_coeffs)
                 points.append((x, y))
@@ -427,7 +719,6 @@ class data_loader():
         
         # Add lines between points
         points = np.round(points).astype(np.int).squeeze()
-        points = np.sort(points, axis=0)
         nump = len(points)
         yp, xp = line(points[0][1], points[0][0], points[1][1], points[1][0])
         for i in range(2, nump):
@@ -440,13 +731,16 @@ class data_loader():
         xp = xp[ind]
         yp = yp[ind]
         layer[yp, xp] = 1
-    
-        return layer
-    
         
+        if len(yp) > 0:             
+            return layer
+        else:
+            return []
+    
+    
     def get_polygon_layer(self, targets, cfg, image_dim, range_filters=None):
         """
-        Function for saving a target segmentation map with same base name as the radar/camera image.
+        Function for getting a AIS target segmentation map for camera and radar images.
         """
         if targets == {}:
             return []
@@ -458,12 +752,11 @@ class data_loader():
         # Loop polygons in target list 
         any_targets = False
         for k, v in targets.items():
-            above_horizon = v['relpos']['below_horizon'] == 'False'
-            if 'relpos' in v.keys() and (cfg['type'] == 'radar' or above_horizon):
+            if 'relpos' in v.keys():
                 # Polygon found, add it
                 normalize = False
                 if cfg['type'] == 'radar':
-                    xm = np.array(v['relpos']['sensor_frame']['polygon']['distance'])
+                    xm = np.array(v['relpos']['sensor_frame']['polygon']['range'])
                     ym = np.array(v['relpos']['sensor_frame']['polygon']['azimuth'])
                     # Avoid wrapping of points in polygon
                     diff = ym.max() - ym.min()
@@ -561,25 +854,78 @@ class data_loader():
         return xCorrected, yCorrected
     
     
+    def camera_p2m(self, xp, yp, camera_matrix, dist_coeffs):
+        """
+        Function for converting pixel coordinates in camera image to cartesian points.
+        """
+        fx = camera_matrix[0,0]
+        fy = camera_matrix[1,1]
+        ux = camera_matrix[0,2]
+        uy = camera_matrix[1,2]
+        
+        k1 = dist_coeffs[0]
+        k2 = dist_coeffs[1]
+        p1 = dist_coeffs[2]
+        p2 = dist_coeffs[3]
+        k3 = dist_coeffs[4]
+    
+        # Apply camera matrix to get meters
+        xm = (xp - ux) / fx
+        ym = (yp - uy) / fy
+       
+        # Correct tangential distortion 
+        r2 = xm**2 + ym**2
+        xm = xm - (2.0 * p1 * xm * ym + p2 * (r2 + 2.0 * xm * xm))
+        ym = ym - (p1 * (r2 + 2.0 * ym * ym) + 2.0 * p2 * xm * ym)
+        
+        # Correct radial distortion  
+        r2 = xm**2 + ym**2
+        xmt = xm / (1.0 + k1 * r2 + k2 * r2 * r2 + k3 * r2 * r2 * r2)
+        ymt = ym / (1.0 + k1 * r2 + k2 * r2 * r2 + k3 * r2 * r2 * r2)
+        r2 = xmt**2 + ymt**2
+        xm = xm / (1.0 + k1 * r2 + k2 * r2 * r2 + k3 * r2 * r2 * r2)
+        ym = ym / (1.0 + k1 * r2 + k2 * r2 * r2 + k3 * r2 * r2 * r2)
+        
+        return xm, ym
+    
+    
     def radar_m2p(self, m, range_filters, m_per_sample):
         """
         Function for converting radar range in meters to pixels according to range filters in .txt radar image metadata file.
         """
-        p = 0*m
-        for i in range(m.size):
+        m = np.array(m)
+        p = np.zeros(len(m))
+        num_f = len(range_filters)
+        for i in range(len(m)):
             f_acc = 0
-            converted = False
-            for j in range(len(range_filters)):
+            for j in range(num_f):
                 f_acc = f_acc + range_filters[j][1] * m_per_sample * range_filters[j][0]
                 p[i] = p[i] + range_filters[j][1]
-                if m[i] < f_acc:
+                if m[i] < f_acc or j == (num_f-1):
                     p[i] = p[i] - (f_acc - m[i]) / (m_per_sample * range_filters[j][0])  
-                    converted = True
                     break
-            if not converted:
-                print('Meter to pixel conversion error, {}m->{}px is out of range, filters={}'.format(m[i], p[i], range_filters))
         return p
-            
+  
+    
+    def radar_p2m(self, px, range_filters, m_per_sample):
+        """
+        Function for converting radar range in pixels to meters according to range filters in .txt radar image metadata file.
+        """
+        px = np.array(px)
+        m = np.zeros(len(px))
+        num_f = len(range_filters)
+        for i in range(len(px)):
+            px_acc = 0
+            for j in range(num_f):
+                px_next = range_filters[j][1]
+                if j < (num_f-1) and px[i] > (px_acc + px_next):
+                    m[i] += range_filters[j][1] * range_filters[j][0] * m_per_sample
+                else:
+                    m[i] += (px[i] - px_acc) * range_filters[j][0] * m_per_sample
+                    break
+                px_acc = px_acc + px_next    
+        return m
+          
     
     def polar2cart(self, r, theta, center):
     
@@ -588,7 +934,7 @@ class data_loader():
         return x, y
 
 
-    def img2polar(self, img, center, final_radius, initial_radius = None, phase_width = 500):
+    def img_cart2polar(self, img, center, final_radius, initial_radius = None, phase_width = 500):
     
         if initial_radius is None:
             initial_radius = 0
@@ -631,7 +977,7 @@ class data_loader():
             with Image.open(BytesIO(r.content)) as im_pil:
                 im_cart = np.array(im_pil, dtype=np.uint8).reshape(dim,dim,1)
                 
-            im_pol = self.img2polar(im_cart, (center, center), center, phase_width=dim_y)
+            im_pol = self.img_cart2polar(im_cart, (center, center), center, phase_width=dim_y)
             if x_offset+range_filters[j][1] <= dim_x:
                 im[:,x_offset:x_offset+range_filters[j][1],:] = im_pol[:dim_y,-range_filters[j][1]:,:]
             else:
@@ -645,11 +991,28 @@ class data_loader():
         return im
     
     
-    def transform_ais_target(self, pva, target, cfg, spt_height):
+    def transform_ais_target(self, target, pva, cfg, spt_height, cfg_ais):
         """
-        Function for calculating and transforming relative target position/polygon to sensor location and orientation.
+        Function for calculating and transforming relative AIS target position/polygon to sensor location and orientation.
         """
         
+        # Delete 'relpos' key to indicate that no position is calculated yet
+        del target['relpos']
+        
+        # Check if moored, anchored or aground
+        moving = True
+        if 'nav_status' in target.keys():
+            if target['nav_status'] == 1 or target['nav_status'] == 5 or target['nav_status'] == 6:
+                moving = False
+                
+        # Check is age is within limits
+        if moving:
+            if abs(target['age']) > cfg_ais['timeout_moving']:
+                return
+        else:
+            if abs(target['age']) > cfg_ais['timeout_static']:
+                return
+            
         # Get sensor position and height above sea level        
         pos_spt = np.array(pva['position'])
         pos_spt[2] = spt_height
@@ -668,9 +1031,9 @@ class data_loader():
         y = self.dlon2m(dlon, lat2)
         
         # Get sensor height
-        dhgt = math.sqrt(self.EARTH_RADIUS**2 + math.sqrt(x**2 + y**2)**2) - self.EARTH_RADIUS # Additional height caused by earth curvature
+        dhgt = math.sqrt(EARTH_RADIUS**2 + math.sqrt(x**2 + y**2)**2) - EARTH_RADIUS # Additional height caused by earth curvature
         z = height_above_sea_level + dhgt
-            
+        
         # Interpolate to current time
         if 'sog' in target.keys():
             cog = target['cog'] * np.pi / 180
@@ -727,11 +1090,11 @@ class data_loader():
         poly[2,:] = z_poly
         poly_vessel = R_att.dot(poly)
         poly_sensor = R_ma.dot(poly_vessel)
-        
+            
         # Position relative to sensor location
         relpos = {}
-        distance = np.sqrt(x**2+y**2)
         rng = math.sqrt(x**2 + y**2 + z**2)
+        distance = np.sqrt(x**2+y**2)
         brg_north = math.atan2(y, x) * 180 / math.pi
         if brg_north < 0:
             brg_north += 360.0
@@ -757,18 +1120,121 @@ class data_loader():
         # Vessel polygon relative to sensor location and orientation
         relpos['sensor_frame']['polygon'] = {}
         rng_poly = np.sqrt(poly_sensor[0,:]**2 + poly_sensor[1,:]**2 + poly_sensor[2,:]**2)
+        az_poly = np.arctan2(poly_sensor[1,:], poly_sensor[0,:]) * 180 / np.pi
         relpos['sensor_frame']['polygon']['range'] = list(rng_poly)
         relpos['sensor_frame']['polygon']['distance'] = list(np.sqrt(poly_sensor[0,:]**2 + poly_sensor[1,:]**2))
-        relpos['sensor_frame']['polygon']['azimuth'] = list(np.arctan2(poly_sensor[1,:], poly_sensor[0,:]) * 180 / np.pi)
+        relpos['sensor_frame']['polygon']['azimuth'] = list(az_poly)
         relpos['sensor_frame']['polygon']['inclin'] = list(-np.arcsin(poly_sensor[2,:] / rng_poly) * 180 / np.pi)
         
-        # Check if target is below horizon
-        dist_to_horizon = np.sqrt(2 * self.EARTH_RADIUS * height_above_sea_level + height_above_sea_level**2)
-        relpos['below_horizon'] = str(distance > dist_to_horizon)
+        # Check if ouside HFOV
+        if cfg['type'] == 'camera' and (abs(az_poly) > 40.0).all():
+            return  
         
+        # Check if target is below horizon
+        dist_to_horizon = np.sqrt(2 * EARTH_RADIUS * height_above_sea_level + height_above_sea_level**2)
+        if cfg['type'] == 'camera' and distance > dist_to_horizon:
+            return 
+
         target['relpos'] = relpos
 
 
+    def transform_arpa_target(self, target, pva, cfg, cfg_arpa, spt_height):
+        """
+        Function for transforming relative ARPA target position to sensor location and orientation.
+        """
+        
+        # TODO: Handle all fields correctly
+        
+        # Check is age is within limits
+        if abs(target['age']) > cfg_arpa['timeout']:
+            return
+            
+        # Check if status is tracked
+        if not target['status'] == 'T':
+            return
+            
+        # Get cunning point and height above sea level        
+        pos_spt = np.array(pva['position'])
+        pos_spt[2] = spt_height
+        if 'heave' in pva.keys():
+            pos_spt[2] -= pva['heave']
+        pos_conning = self.translate_pos(pos_spt, np.array(pva['attitude']), np.array(cfg_arpa['conning_point']['location']))
+        height_above_sea_level_conning = pos_conning[2]
+        
+        # Get relative position to target in meters
+        x = 1852 * target['distance'] * math.cos(target['bearing'] * math.pi / 180)
+        y = 1852 * target['distance'] * math.sin(target['bearing'] * math.pi / 180)
+        
+        # Get additional height caused by earth curvature
+        dhgt = math.sqrt(EARTH_RADIUS**2 + (1852 * target['distance'])**2) - EARTH_RADIUS 
+        z = height_above_sea_level_conning + dhgt
+            
+        # Interpolate to current time
+        cog = target['cog'] * np.pi / 180
+        x_vel = target['sog'] * math.cos(cog) * 0.514444
+        y_vel = target['sog'] * math.sin(cog) * 0.514444
+        x = x + (target['age']) * x_vel
+        y = y + (target['age']) * y_vel
+        
+        # Get rotation matrices
+        R_ma = self.rot_matrix_from_euler(cfg['rotation']).transpose()
+        R_att = self.rot_matrix_from_euler(pva['attitude']).transpose()
+        
+        # Translate and rotate target pos vector to sensor frame
+        # Assume that target position is measured on radar 0
+        T = (np.array(cfg['location']) - np.array(cfg_arpa['conning_point']['location'])).reshape(3,1)
+        loc_rotated = R_att.transpose().dot(T)
+        p = np.array([x, y, z]).reshape((3,1)) - loc_rotated
+        p_vessel = R_att.dot(p)
+        p_sensor = R_ma.dot(p_vessel)
+        p = p.squeeze()
+        
+        # Position relative to sensor location
+        relpos = {}
+        rng = np.sqrt(p[0]**2 + p[1]**2 + p[2]**2)
+        distance = np.sqrt(p[0]**2 + p[1]**2)
+        brg_north = math.atan2(p[1], p[0]) * 180 / math.pi
+        if brg_north < 0:
+            brg_north += 360.0
+              
+        relpos['north'] = p[0]
+        relpos['east'] = p[1]
+        relpos['down'] = p[2]
+        relpos['distance'] = distance
+        relpos['range'] = rng
+        relpos['bearing_north'] = brg_north
+         
+        # Position relative to sensor location and vessel orientation
+        relpos['vessel_frame'] = {}
+        relpos['vessel_frame']['distance'] = math.sqrt(p_vessel[0]**2 + p_vessel[1]**2)
+        relpos['vessel_frame']['azimuth'] = math.atan2(p_vessel[1], p_vessel[0]) * 180 / np.pi
+        relpos['vessel_frame']['inclin'] = -math.asin(p_vessel[2]/rng) * 180 / np.pi
+              
+        # Position relative to sensor location and orientation
+        relpos['sensor_frame'] = {}
+        relpos['sensor_frame']['distance'] = math.sqrt(p_sensor[0]**2 + p_sensor[1]**2)
+        relpos['sensor_frame']['azimuth'] = math.atan2(p_sensor[1], p_sensor[0]) * 180 / np.pi
+        relpos['sensor_frame']['inclin'] = -math.asin(p_sensor[2]/rng) * 180 / np.pi
+
+        # Vessel polygon relative to sensor location and orientation
+        relpos['sensor_frame']['polygon'] = {}
+        relpos['sensor_frame']['polygon']['range'] = [rng]
+        relpos['sensor_frame']['polygon']['distance'] = [relpos['sensor_frame']['distance']]
+        relpos['sensor_frame']['polygon']['azimuth'] = [relpos['sensor_frame']['azimuth']]
+        relpos['sensor_frame']['polygon']['inclin'] = [relpos['sensor_frame']['inclin']]
+        
+        # Check if ouside HFOV
+        if cfg['type'] == 'camera' and abs(relpos['sensor_frame']['azimuth']) > 40.0:
+            return 
+        
+        # Check if target is below horizon
+        dist_to_horizon = np.sqrt(2 * EARTH_RADIUS * p[2] + p[2]**2)
+        if cfg['type'] == 'camera' and distance > dist_to_horizon:
+            return 
+
+        target['relpos'] = relpos
+              
+                            
     def radar_interpolate_targets(self, targets0, targets1):
         """
         Function for compensating target position/polygons for a sweep time of about 2.5 seconds in a radar image.
@@ -778,6 +1244,10 @@ class data_loader():
             if mmsi in targets1.keys():
                 dat1 = targets1[mmsi]
             else:
+                del targets[mmsi]
+                continue
+            
+            if not 'relpos' in dat0.keys() or not 'relpos' in dat1.keys():
                 del targets[mmsi]
                 continue
             
@@ -874,8 +1344,6 @@ class data_loader():
             relpos['sensor_frame']['polygon']['distance'] = list(dist)
             relpos['sensor_frame']['polygon']['azimuth'] = list(azimuth)
             relpos['sensor_frame']['polygon']['inclin'] = list(inclin)
-            
-            relpos['below_horizon'] = dat0['relpos']['below_horizon']
     
             targets[mmsi]['relpos'] = relpos
             
@@ -883,19 +1351,31 @@ class data_loader():
     
     
     def dlat2m(self, dlat):
-        return self.EARTH_RADIUS * dlat
+        """
+        Function for converting difference in latitude (radians) to meters.
+        """
+        return EARTH_RADIUS * dlat
        
         
     def m2dlat(self, m):
-        return m / self.EARTH_RADIUS
+        """
+        Function for converting meters to difference in latitude (radians).
+        """
+        return m / EARTH_RADIUS
     
        
     def dlon2m(self, dlon, lat):
-        return self.EARTH_RADIUS * dlon * math.cos(lat)
+        """
+        Function for converting difference in longitude (radians) to meters.
+        """
+        return EARTH_RADIUS * dlon * math.cos(lat)
     
     
     def m2dlon(self, m, lat):
-        return m / (self.EARTH_RADIUS * math.cos(lat))
+        """
+        Function for converting meters to difference in longitude (radians).
+        """
+        return m / (EARTH_RADIUS * math.cos(lat))
     
     
     def rot_matrix_from_euler(self, att):
@@ -941,6 +1421,6 @@ class data_loader():
         # Translate position
         loc_rotated = R_att.dot(T)
         lat = pos[0] + self.m2dlat(loc_rotated[0]) * 180 / np.pi
-        lon = pos[1] + self.m2dlon(loc_rotated[1], pos[0]) * 180 / np.pi
+        lon = pos[1] + self.m2dlon(loc_rotated[1], pos[0] * np.pi / 180) * 180 / np.pi
         hgt = pos[2] - loc_rotated[2]
         return np.array((lat[0], lon[0], hgt[0]))
