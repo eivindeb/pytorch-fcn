@@ -24,6 +24,7 @@ TODO:
 - move datasetfolder to root argument, write label and data folder to config file maybe along with parameters
 - calculate mean bgr in generate dataset and write to config
 - finish DataRange class or find smarter way to write what parts of image has targets
+- add weight to log dir name
 """
 
 
@@ -489,7 +490,7 @@ class RadarShipTargetFilterLandAndHidden(RadarDatasetFolder):
 
     def __init__(self, root, data_folder, split='train', transform=True, dataset_name="radartest", label_folder="",
                  data_ranges=(np.s_[:int(4096/3), 0:2000], np.s_[int(4096/3):int(2*4096/3), 0:2000], np.s_[int(2*4096/3):, 0:2000]), cache_labels=True,
-                 min_data_interval=0.1, remove_files_without_targets = True):
+                 min_data_interval=0, remove_files_without_targets = True):
 
         super(RadarShipTargetFilterLandAndHidden, self).__init__(root, data_folder=data_folder,
             split=split, transform=transform, label_folder=label_folder,
@@ -502,12 +503,14 @@ if __name__ == "__main__":
     from dataloader import data_loader
 
     #np.s_[:int(4096/3), 0:2000], np.s_[int(4096/3):int(2*4096/3), 0:2000], np.s_[int(2*4096/3):, 0:2000]
-    valid = RadarShipTargetFilterLandAndHidden("/data/polarlys", data_folder="/nas0/", label_folder="/data/polarlys/labels/", split="train", dataset_name="final")
+    valid = RadarShipTargetFilterLandAndHidden("/data/polarlys", data_folder="/nas0/", label_folder="/data/polarlys/labels/", split="train", dataset_name="2018")
 
+    print("mean: ")
     print(valid.get_mean())
     mean_cols = valid.get_mean_of_columns()
     np.savetxt("column_sum_new.txt", mean_cols)
 
+    print("class shares: ")
     class_shares = valid.get_class_shares()
     print(class_shares)
     print("hei")

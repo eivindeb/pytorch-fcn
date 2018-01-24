@@ -142,12 +142,43 @@ def get_matrices():
     #land = np.load("/data/polarlys/labels/Radar1/2017-10-22-11_25_53_label_land.npy")
 
 
+def get_file_and_labels(data_folder, filename):
+    here = path.dirname(path.abspath(__file__))
+    from dataloader import data_loader
+    self_data_loader = data_loader("/data/polarlys/", sensor_config=path.join(here, "dataloader.json"))
+    filename_split = filename.split("-")
+    file_rel_path = "{}/{}-{}/{}".format(filename_split[0], filename_split[1], filename_split[2], filename_split[3].split("_")[0])
+    file_path = path.join(data_folder, file_rel_path)
+    img = self_data_loader.load_image(file_path)
+    ais = self_data_loader.load_ais_layer_by_basename(path.splitext(data_path)[0])
+
+
+
+def remove_empty_files(root):
+    here = path.dirname(path.abspath(__file__))
+    from dataloader import data_loader
+    self_data_loader = data_loader(root, sensor_config=path.join(here, "dataloader.json"))
+
+    with open(path.join(root, "final_Radar1-Radar0_test.txt"), "r+") as index:
+        lines = index.readlines()
+        new_lines = []
+        for line in lines:
+            filename = line.split(";")[0]
+            img = self_data_loader.load_image(path.join("/nas0/", filename))
+            if not isinstance(img, list):
+                new_lines.append(line)
+        index.seek(0)
+        index.truncate()
+        index.writelines(new_lines)
+
+
 #print(timeit.timeit("get_matrices()", number=100, globals=globals()))
 #path1 = "/media/stx/2017/Radar0/test.jpg"
 #path2 = "/mnt/stx/labels"
 
-
-find_results_to_index_format()
+get_file_and_labels("/nas0/", "2017-10-24-15_10_01.bmp")
+#remove_empty_files("/data/polarlys/")
+#find_results_to_index_format()
 #construct_directory_structure_and_move("/data/polarlys/labels/Radar1", "/data/polarlys/labels")
 #print(timeit.timeit("load_vs_calc()", number=100, globals=globals()))
 #npany()
