@@ -16,8 +16,6 @@ import tqdm
 import torchfcn
 import traceback
 
-from git import Repo, Git
-
 
 def cross_entropy2d(input, target, weight=None, size_average=True):
     # input: (n, c, h, w), target: (n, h, w)
@@ -178,12 +176,6 @@ class Trainer(object):
 
             if self.iteration % self.interval_validate == 0 and self.iteration != 0:
                 self.validate()
-                #try:
-                #    self.git_push_progress()
-                #except Exception as e:
-                #    with open("git_error.txt", "a") as file:
-                #        traceback.print_tb(e.__traceback__, file=file)
-                #    print("Could not push progress to git")
 
             assert self.model.training
 
@@ -232,12 +224,3 @@ class Trainer(object):
             self.train_epoch()
             if self.iteration >= self.max_iter:
                 break
-
-    def git_push_progress(self):
-        repo_dir = osp.expanduser("~/Projects/ntnu-project/ml/pytorch-fcn/examples/radar/logs")
-        repo = Repo(repo_dir)
-        repo.index.add([osp.join(self.out, "log.csv")], force=True)
-        #repo.index.add([osp.join(self.out, "visualization_viz")], force=True)
-        repo.index.commit("progress commit iteration {}".format(self.iteration))
-        origin = repo.remote("origin")
-        origin.push()
