@@ -99,7 +99,8 @@ class Trainer(object):
 
         val_loss = 0
         visualizations = []
-        label_trues, label_preds = [], []
+
+        hist = np.zeros((n_class, n_class))
         for batch_idx, (data, target) in tqdm.tqdm(
                 enumerate(self.val_loader), total=len(self.val_loader),
                 desc='Valid iteration=%d' % self.iteration, ncols=80,
@@ -118,16 +119,18 @@ class Trainer(object):
             imgs = data.data.cpu()
             lbl_pred = score.data.max(1)[1].cpu().numpy()[:, :, :]
             lbl_true = target.data.cpu()
+
             for img, lt, lp in zip(imgs, lbl_true, lbl_pred):
-                img, lt = self.val_loader.dataset.untransform(img, lt)
-                label_trues.append(lt)
-                label_preds.append(lp)
                 if len(visualizations) < 9:
+                    img, lt = self.val_loader.dataset.untransform(img, lt)
                     viz = fcn.utils.visualize_segmentation(
                         lbl_pred=lp, lbl_true=lt, img=img, n_class=n_class)
                     visualizations.append(viz)
-        metrics = torchfcn.utils.label_accuracy_score(
-            label_trues, label_preds, n_class)
+                    hist += torchfcn.utils.fast_hist(lt.flatten(), lp.flatten(), n_class)
+                else:
+                    hist += torchfcn.utils.fast_hist(lt.numpy().flatten(), lp.flatten(), n_class)
+
+        metrics = torchfcn.utils.label_accuracy_score_from_hist(hist)
 
         out = osp.join(self.out, 'visualization_viz')
         if not osp.exists(out):
