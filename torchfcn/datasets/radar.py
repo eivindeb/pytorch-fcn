@@ -104,7 +104,7 @@ class RadarDatasetFolder(data.Dataset):
             else:
                 np.append(self.class_names, "land")
 
-        self.data_loader = data_loader(self.root, sensor_config=osp.join(here, "dataloader.json"))
+        self.data_loader = DataLoader(self.data_folder, sensor_config=osp.join(here, "dataloader.json"))
 
         # TODO: fix path connections between location of dataset index,and data files and labels
         try:
@@ -190,8 +190,11 @@ class RadarDatasetFolder(data.Dataset):
         data_range = self.data_ranges[self.files[self.split][index]["data"][1]]
 
         # load image
-        img = self.data_loader.load_image(data_path)[data_range]
-        img = np.expand_dims(img, axis=0)
+        basename = osp.splitext(data_path)[0]
+        t = self.data_loader.get_time_from_basename(basename)
+        sensor, sensor_index, subsensor_index = self.data_loader.get_sensor_from_basename(basename)
+
+        img = self.data_loader.load_image(t, sensor, sensor_index, subsensor_index)[data_range]
 
         # load label
         lbl = self.get_label(data_path, self.files[self.split][index]["label"])[data_range]
@@ -401,7 +404,10 @@ class RadarDatasetFolder(data.Dataset):
                 cached_label_missing = True
 
         if not self.cache_labels or cached_label_missing:
-            ais = self.data_loader.load_ais_layer_by_basename(osp.splitext(data_path)[0])
+            basename = osp.splitext(data_path)[0]
+            t = self.data_loader.get_time_from_basename(basename)
+            sensor, sensor_index, subsensor_index = self.data_loader.get_sensor_from_basename(basename)
+            ais = self.data_loader.load_ais_layer_sensor(t, sensor, sensor_index, subsensor_index)
 
             if len(ais) == 0:
                 img = self.data_loader.load_image(data_path)
@@ -416,7 +422,7 @@ class RadarDatasetFolder(data.Dataset):
                 try:
                     land = np.load(label_path.replace(".npy", "_land.npy"))
                 except:
-                    land = self.data_loader.load_chart_layer_by_basename(osp.splitext(data_path)[0], 0)
+                    land = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, subsensor_index)
                 label[land == 1] = self.LABELS["land"]
 
                 if self.filter_land and len(land) != 0:
@@ -482,7 +488,7 @@ class RadarShipTargetFilterLandAndHidden(RadarDatasetFolder):
 
 
 if __name__ == "__main__":
-    from dataloader import data_loader
+    from dataloader import DataLoader
 
     #np.s_[:int(4096/3), 0:2000], np.s_[int(4096/3):int(2*4096/3), 0:2000], np.s_[int(2*4096/3):, 0:2000]
     valid = RadarShipTargetFilterLandAndHidden("/data/polarlys", data_folder="/nas0/", label_folder="/data/polarlys/labels/", split="train", dataset_name="2018")
@@ -506,6 +512,6 @@ if __name__ == "__main__":
     #test = np.load("/media/stx/LaCie1/export/2017-10-25/2017-10-25-17/Radar0/2017-10-25-17_00_02_513_label_land.npy")
     #print(test)
 else:
-    from .dataloader import data_loader
+    from .dataloader import DataLoader
 
 
