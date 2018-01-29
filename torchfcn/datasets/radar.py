@@ -68,14 +68,15 @@ class RadarDatasetFolder(data.Dataset):
     ])
 
     # mean_bgr = np.array([55.9, 55.9, 56])
-    mean_bgr = np.array([55.1856378125, 55.1856378125, 53.8775])
+    #mean_bgr = np.array([55.1856378125, 55.1856378125, 53.8775])
+    mean_bgr = np.array([55.1856378125])
     INDEX_FILE_NAME = "{}_{}_{}.txt"
     LABELS = {"background": 0, "ais": 1, "land": 2, "hidden": 3, "unlabeled": -1}
 
     def __init__(self, root, dataset_name, data_folder, split='train', transform=False, radar_type=("Radar1", "Radar0"),
                  data_ranges=(np.s_[:, :]), cache_labels=False, filter_land=False,
                  land_is_target=False, remove_hidden_targets=True, min_data_interval=0,
-                 remove_files_without_targets=True, label_folder="", skip_processed_files=True, use_magnitude_mask=True):
+                 remove_files_without_targets=True, label_folder="", skip_processed_files=True):
         self.root = root
         self.radar_type = radar_type  # TODO: fix printing when not tuple
         self.split = split
@@ -190,44 +191,25 @@ class RadarDatasetFolder(data.Dataset):
 
         # load image
         img = self.data_loader.load_image(data_path)[data_range]
-
-        img_3ch = np.empty((img.shape[0], img.shape[1], 3))
-        img_3ch[:, :, 0] = img
-        img_3ch[:, :, 1] = img
-
-        if self.use_magnitude_mask:
-            max_val = 255
-            min_val = 0
-            interval_length = max_val - min_val
-            decay_constant = -10 / img.shape[1]
-
-            for col in range(img.shape[1]):
-                # img_3ch[:, col, 1] = int(interval_length * exp(decay_constant * col) + min_val)
-                # img_3ch[:, col, 2] = int(-((max_val - min_val) / (img.shape[1] - 1)) * col + max_val)
-                img_3ch[:, col, 2] = int(222.3 * exp(-0.03332 * col) + 72.35 * exp(-0.0003524 * col))
-        else:
-            img_3ch[:, :, 2] = img
+        img = np.expand_dims(img, axis=0)
 
         # load label
         lbl = self.get_label(data_path, self.files[self.split][index]["label"])[data_range]
 
         if self._transform:
-            return self.transform(img_3ch, lbl)
+            return self.transform(img, lbl)
         else:
-            return img_3ch, lbl
+            return img, lbl
 
     def transform(self, img, lbl):
-        # Construct 3 channel version of image with exponential and linear mask to model noise intensity with range
         img = img.astype(np.float64)
         img -= self.mean_bgr
-        img = img.transpose(2, 0, 1)
         img = torch.from_numpy(img).float()
         lbl = torch.from_numpy(lbl).long()
         return img, lbl
 
     def untransform(self, img, lbl):
         img = img.numpy()
-        img = img.transpose(1, 2, 0)
         img += self.mean_bgr
         img = img.astype(np.uint8)
         lbl = lbl.numpy()

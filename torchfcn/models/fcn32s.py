@@ -4,6 +4,7 @@ import fcn
 import numpy as np
 import torch
 import torch.nn as nn
+import math
 
 
 # https://github.com/shelhamer/fcn.berkeleyvision.org/blob/master/surgery.py
@@ -168,10 +169,14 @@ class FCN32s(nn.Module):
         ]
         for l1, l2 in zip(vgg16.features, features):
             if isinstance(l1, nn.Conv2d) and isinstance(l2, nn.Conv2d):
-                assert l1.weight.size() == l2.weight.size()
-                assert l1.bias.size() == l2.bias.size()
-                l2.weight.data = l1.weight.data
-                l2.bias.data = l1.bias.data
+                if l1.in_channels != l2.in_channels:  # if grayscale input
+                    n = l2.kernel_size[0] * l2.kernel_size[1] * l2.out_channels
+                    l2.weight.data.normal_(0, math.sqrt(2. / n))
+                else:
+                    assert l1.weight.size() == l2.weight.size()
+                    assert l1.bias.size() == l2.bias.size()
+                    l2.weight.data = l1.weight.data
+                    l2.bias.data = l1.bias.data
         for i, name in zip([0, 3], ['fc6', 'fc7']):
             l1 = vgg16.classifier[i]
             l2 = getattr(self, name)
