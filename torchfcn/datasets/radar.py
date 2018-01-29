@@ -91,7 +91,6 @@ class RadarDatasetFolder(data.Dataset):
         self.remove_files_without_targets = remove_files_without_targets
         self.skip_processed_files = skip_processed_files
         self.min_data_interval = min_data_interval
-        self.use_magnitude_mask = use_magnitude_mask
         self.data_folder = data_folder
         self.label_folder = label_folder if label_folder != "" else osp.join(self.root, "labels")
         if not osp.exists(self.label_folder):
@@ -207,12 +206,14 @@ class RadarDatasetFolder(data.Dataset):
     def transform(self, img, lbl):
         img = img.astype(np.float64)
         img -= self.mean_bgr
+        img = np.expand_dims(img, axis=0)
         img = torch.from_numpy(img).float()
         lbl = torch.from_numpy(lbl).long()
         return img, lbl
 
     def untransform(self, img, lbl):
         img = img.numpy()
+        img = np.squeeze(img, axis=0)
         img += self.mean_bgr
         img = img.astype(np.uint8)
         lbl = lbl.numpy()
@@ -396,7 +397,6 @@ class RadarDatasetFolder(data.Dataset):
 
     def get_label(self, data_path, label_path):
         cached_label_missing = False
-
         if self.cache_labels:
             try:
                 label = np.load(label_path).astype(np.int32)

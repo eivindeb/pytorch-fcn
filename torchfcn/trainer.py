@@ -123,8 +123,8 @@ class Trainer(object):
             for img, lt, lp in zip(imgs, lbl_true, lbl_pred):
                 if len(visualizations) < 9:
                     img, lt = self.val_loader.dataset.untransform(img, lt)
-                    if img.shape[2] == 1:
-                        img = np.repeat(img, 3, 2)
+                    if len(img.shape) == 2:
+                        img = np.repeat(img[:, :, np.newaxis], 3, 2)
                     viz = fcn.utils.visualize_segmentation(
                         lbl_pred=lp, lbl_true=lt, img=img, n_class=n_class)
                     visualizations.append(viz)
