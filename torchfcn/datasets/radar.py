@@ -14,7 +14,7 @@ from os import listdir, makedirs, remove
 import re
 import random
 import tqdm
-from math import exp
+from configparser import ConfigParser
 
 
 """
@@ -73,41 +73,48 @@ class RadarDatasetFolder(data.Dataset):
     INDEX_FILE_NAME = "{}_{}_{}.txt"
     LABELS = {"background": 0, "ais": 1, "land": 2, "hidden": 3, "unlabeled": -1}
 
-    def __init__(self, root, dataset_name, data_folder, split='train', transform=False, radar_type=("Radar1", "Radar0"),
-                 data_ranges=(np.s_[:, :]), cache_labels=False, filter_land=False,
-                 land_is_target=False, remove_hidden_targets=True, min_data_interval=0,
-                 remove_files_without_targets=True, label_folder="", skip_processed_files=True):
+    def __init__(self, root, data_folder, dataset_name, cfg='polarlys_cfg2.txt', cache_labels=False, label_folder=None, split='train', transform=False):
         self.root = root
-        self.radar_type = radar_type  # TODO: fix printing when not tuple
+        self.data_folder = data_folder
+        self.cache_labels = cache_labels
         self.split = split
         self._transform = transform
-        self.dataset_name = dataset_name
-        self.data_ranges = data_ranges
-        self.cache_labels = cache_labels
-        self.filter_land = filter_land
-        self.land_is_target = land_is_target
         self.files = collections.defaultdict(list)
-        self.remove_hidden_targets = remove_hidden_targets
-        self.remove_files_without_targets = remove_files_without_targets
-        self.skip_processed_files = skip_processed_files
-        self.min_data_interval = min_data_interval
-        self.data_folder = data_folder
-        self.label_folder = label_folder if label_folder != "" else osp.join(self.root, "labels")
-        if not osp.exists(self.label_folder):
-            makedirs(self.label_folder)
+        self.dataset_folder = osp.join(self.root, dataset_name)
 
-        if land_is_target:
-            if filter_land:
-                print("Exiting: Land is both declared as a target and filtered out, please adjust dataset settings.")
-                exit(0)
-            else:
-                np.append(self.class_names, "land")
+        if cache_labels and label_folder is None:
+            print("Warning: Cache labels is set to true, but no label folder is provided. Creating label folder in root directory.")
+            if not osp.exists("labels"):
+                makedirs("labels")
+            self.label_folder = osp.join(root, "labels")
+        else:
+            self.label_folder = label_folder
+
+        config = ConfigParser()
+        try:
+            with open(cfg, 'r') as cfg:
+                config.read(cfg)
+        except IOError:
+            print("Configuration file not found at {}".format(cfg))
+            exit(0)
+        self.radar_types = [radar for radar in config["DEFAULT"].get("RadarTypes", ["Radar0", "Radar1", "Radar2"]).split(",")]
+        self.filter_land = config["DEFAULT"].getboolean("FilterLand", False)
+        self.remove_hidden_targets = config["DEFAULT"].getboolean("RemoveHiddenTargets", True)
+        self.class_names = [c for c in config["DEFAULT"].get("classes", ("background", "ship")).split(",")]
+        self.remove_files_without_targets = config["DEFAULT"].getboolean("RemoveFilesWithoutTargets", True)
+        self.min_data_interval = config["DEFAULT"].getint("MinDataIntervalSeconds", 0)
+        self.skip_processed_files = config["DEFAULT"].getboolean("SkipProcessedFiles", True)
+        #self.data_ranges = data_ranges
+
+        if "land" in self.class_names and self.filter_land:
+            print("Exiting: Land is both declared as a target and filtered out, please adjust dataset settings.")
+            exit(0)
 
         self.data_loader = DataLoader(self.data_folder, sensor_config=osp.join(here, "dataloader.json"))
 
         # TODO: fix path connections between location of dataset index,and data files and labels
         try:
-            with open(osp.join(self.root, self.INDEX_FILE_NAME.format(self.dataset_name, "-".join(self.radar_type), self.split)), "r+") as file:
+            with open(osp.join(self.dataset_folder, self.split), "r+") as file:
                 lines = file.readlines()
                 file_edited = False
                 lbl = None
@@ -161,7 +168,7 @@ class RadarDatasetFolder(data.Dataset):
             if self.min_data_interval > 0:
                 self.files[self.split] = sorted(self.files[self.split], key=lambda x: datetime.datetime.strptime(x["data"][0].split("/")[-1].replace(".bmp", ""),
                                                                                "%Y-%m-%d-%H_%M_%S"))
-                last_time = {radar_type: datetime.datetime(year=2000, month=1, day=1) for radar_type in self.radar_type}
+                last_time = {radar_type: datetime.datetime(year=2000, month=1, day=1) for radar_type in self.radar_types}
 
                 new_files = []
 
@@ -225,7 +232,7 @@ class RadarDatasetFolder(data.Dataset):
                 filenames = []
 
             for child in listdir(parent):
-                if re.match("^[0-9-]*$", child) or child in self.radar_type:
+                if re.match("^[0-9-]*$", child) or child in self.radar_types:
                     filenames = collect_data_files_recursively(osp.join(parent, child), filenames)
                 elif child.endswith(".bmp"):
                     filenames.append(osp.join(parent, child))
@@ -249,7 +256,7 @@ class RadarDatasetFolder(data.Dataset):
 
             #last_processed = lines[-1].rstrip("\n").split(";")[0].replace(".bmp", "")
             #last_processed_time = datetime.datetime.strptime(last_processed, "%Y-%m-%d-%H_%M_%S")
-            last_time = {radar_type: datetime.datetime(year=2000, month=1, day=1) for radar_type in self.radar_type}
+            last_time = {radar_type: datetime.datetime(year=2000, month=1, day=1) for radar_type in self.radar_types}
             for file in tqdm.tqdm(sorted_files, total=len(sorted_files), desc="Filtering data files", leave=False):
                 try:
                     if self.skip_processed_files and (self.remove_files_without_targets and file in files_without_targets or file in files_with_targets):
@@ -309,8 +316,8 @@ class RadarDatasetFolder(data.Dataset):
 
         random.shuffle(filtered_files)
 
-        with open(osp.join(self.root, self.INDEX_FILE_NAME.format(self.dataset_name, "-".join(self.radar_type), "train")), "w+") as train:
-            with open(osp.join(self.root, self.INDEX_FILE_NAME.format(self.dataset_name, "-".join(self.radar_type), "valid")), "w+") as valid:
+        with open(osp.join(self.dataset_folder, "train.txt"), "w+") as train:
+            with open(osp.join(self.dataset_folder, "valid.txt"), "w+") as valid:
                 for i, file in enumerate(filtered_files):
                     checked_ranges = ""
                     for j in file[1]:
@@ -385,8 +392,7 @@ class RadarDatasetFolder(data.Dataset):
     def collect_and_cache_labels(self):
         files = self.files[self.split]
 
-        with open(osp.join(self.root, self.INDEX_FILE_NAME.format(
-                self.dataset_name, "-".join(self.radar_type), "train" if self.split == "valid" else "valid")), "r") as file:
+        with open(osp.join(self.dataset_folder, "train" if self.split == "valid" else "valid"), "r") as file:
             for line in file:
                 line = line.strip()
                 files.append(line.split(";"))
@@ -418,7 +424,7 @@ class RadarDatasetFolder(data.Dataset):
             else:
                 label = ais.astype(np.int8)
 
-            if self.land_is_target or self.filter_land:
+            if "land" in self.class_names or self.filter_land:
                 try:
                     land = np.load(label_path.replace(".npy", "_land.npy"))
                 except:
@@ -441,13 +447,13 @@ class RadarDatasetFolder(data.Dataset):
         if self.filter_land:
             label[(label == self.LABELS["land"]) | (label == self.LABELS["hidden"])] = self.LABELS["unlabeled"]
 
-        elif not self.land_is_target:
+        elif not "land" in self.class_names:
             label[label == self.LABELS["land"]] = self.LABELS["background"]
 
         return label
 
     def generate_list_of_required_files(self):
-        index_file = self.INDEX_FILE_NAME.format(self.dataset_name, "-".join(self.radar_type), self.split)
+        index_file = osp.join(self.dataset_folder, self.split) + ".txt"
 
         required_files = index_file.replace(".txt", "_required_files.txt")
 
@@ -465,7 +471,7 @@ class RadarDatasetFolder(data.Dataset):
                 lines = [data_file + "\n", data_file.replace(".bmp", ".json\n"), data_file.replace(".bmp", ".txt\n")]
                 if self.cache_labels:
                     lines.append(data_file.replace(".bmp", "_label_ship.npy\n"))
-                    if self.land_is_target or (self.filter_land and self.remove_hidden_targets):
+                    if "land" in self.class_names or (self.filter_land and self.remove_hidden_targets):
                         lines.append(data_file.replace(".bmp", "_label_land.npy\n"))
                     if self.remove_hidden_targets:
                         lines.append(data_file.replace(".bmp", "_label_land_hidden.npy\n"))
