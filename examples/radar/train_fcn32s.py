@@ -108,19 +108,19 @@ def main():
     #root = "/media/stx/LaCie1/export"
 
     #root = osp.expanduser('~/data/datasets/Radar')
-    root = "/data/polarlys"
+    root = "/home/eivind/Documents/polarlys_datasets"
 
     data_folder = "/nas0/"
     #data_folder = root
 
     kwargs = {'num_workers': 0, 'pin_memory': True} if cuda else {}
     train_loader = torch.utils.data.DataLoader(
-        torchfcn.datasets.RadarShipTargetFilterLandAndHidden(
-            root, data_folder=data_folder, label_folder=osp.join(root, "labels"), split='train', transform=True, cache_labels=True, dataset_name="final"),
+        torchfcn.datasets.RadarDatasetFolder(
+            root, split='train', cfg=osp.join(root, "polarlys_cfg.txt"), transform=True, dataset_name="2018"),
         batch_size=1, shuffle=True, **kwargs)
     val_loader = torch.utils.data.DataLoader(
-        torchfcn.datasets.RadarShipTargetFilterLandAndHidden(
-            root, data_folder=data_folder, label_folder=osp.join(root, "labels"), split='valid', transform=True, cache_labels=True, dataset_name="final", min_data_interval=0),
+        torchfcn.datasets.RadarDatasetFolder(
+            root, split='valid', cfg=osp.join(root, "polarlys_cfg.txt"), transform=True, dataset_name="2018"),
         batch_size=1, shuffle=False, **kwargs)
 
     # 2. model

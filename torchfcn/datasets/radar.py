@@ -56,12 +56,6 @@ here = osp.dirname(osp.abspath(__file__))
 
 
 class RadarDatasetFolder(data.Dataset):
-
-    class_names = np.array([
-        "background",
-        "ship",
-    ])
-
     class_weights = np.array([  # based on frequency of targets in data
         1,
         5000,
@@ -73,41 +67,47 @@ class RadarDatasetFolder(data.Dataset):
     INDEX_FILE_NAME = "{}_{}_{}.txt"
     LABELS = {"background": 0, "ais": 1, "land": 2, "hidden": 3, "unlabeled": -1}
 
-    def __init__(self, root, data_folder, dataset_name, cfg='polarlys_cfg2.txt', cache_labels=False, label_folder=None, split='train', transform=False):
+    def __init__(self, root, dataset_name, cfg, split='train', transform=False):
         self.root = root
-        self.data_folder = data_folder
-        self.cache_labels = cache_labels
         self.split = split
         self._transform = transform
         self.files = collections.defaultdict(list)
         self.dataset_folder = osp.join(self.root, dataset_name)
-
-        if cache_labels and label_folder is None:
-            print("Warning: Cache labels is set to true, but no label folder is provided. Creating label folder in root directory.")
-            if not osp.exists("labels"):
-                makedirs("labels")
-            self.label_folder = osp.join(root, "labels")
-        else:
-            self.label_folder = label_folder
+        if not osp.exists(self.dataset_folder):
+            makedirs(self.dataset_folder)
 
         config = ConfigParser()
         try:
             with open(cfg, 'r') as cfg:
-                config.read(cfg)
+                config.read_file(cfg)
         except IOError:
             print("Configuration file not found at {}".format(cfg))
             exit(0)
-        self.radar_types = [radar for radar in config["DEFAULT"].get("RadarTypes", ["Radar0", "Radar1", "Radar2"]).split(",")]
-        self.filter_land = config["DEFAULT"].getboolean("FilterLand", False)
-        self.remove_hidden_targets = config["DEFAULT"].getboolean("RemoveHiddenTargets", True)
-        self.class_names = [c for c in config["DEFAULT"].get("classes", ("background", "ship")).split(",")]
-        self.remove_files_without_targets = config["DEFAULT"].getboolean("RemoveFilesWithoutTargets", True)
-        self.min_data_interval = config["DEFAULT"].getint("MinDataIntervalSeconds", 0)
-        self.skip_processed_files = config["DEFAULT"].getboolean("SkipProcessedFiles", True)
-        #self.data_ranges = data_ranges
+        self.cache_labels = config["Parameters"].getboolean("CacheLabels", False)
+        self.data_folder = config["Paths"].get("DataFolder")
+        self.label_folder = config["Paths"].get("LabelFolder")
+
+        if self.data_folder is None:
+            print("Configuration file missing required field: DataFolder")
+            exit(0)
+
+        if self.cache_labels and self.label_folder is None:
+            print("Cache labels is set to true, but no label folder is provided.")
+            exit(0)
+
+        self.radar_types = [radar for radar in config["Parameters"].get("RadarTypes", "Radar0,Radar1,Radar2").split(",")]
+        self.filter_land = config["Parameters"].getboolean("FilterLand", False)
+        self.remove_hidden_targets = config["Parameters"].getboolean("RemoveHiddenTargets", True)
+        self.class_names = np.array([c for c in config["Parameters"].get("Classes", "background,ship").split(",")])
+        self.class_weights = np.array([int(weight) for weight in config["Parameters"].get("ClassWeights", "1,5000").split(",")])
+        self.remove_files_without_targets = config["Parameters"].getboolean("RemoveFilesWithoutTargets", True)
+        self.min_data_interval = config["Parameters"].getint("MinDataIntervalSeconds", 0)
+        self.skip_processed_files = config["Parameters"].getboolean("SkipProcessedFiles", True)
+        self.coordinate_system = config["Parameters"].get("CoordinateSystem", "Polar")
+        self.data_ranges = (np.s_[:int(4096/3), 0:2000], np.s_[int(4096/3):int(2*4096/3), 0:2000], np.s_[int(2*4096/3):, 0:2000])
 
         if "land" in self.class_names and self.filter_land:
-            print("Exiting: Land is both declared as a target and filtered out, please adjust dataset settings.")
+            print("Exiting: Land is both declared as a target and filtered out, please adjust configuration.")
             exit(0)
 
         self.data_loader = DataLoader(self.data_folder, sensor_config=osp.join(here, "dataloader.json"))
@@ -265,7 +265,7 @@ class RadarDatasetFolder(data.Dataset):
                     file_time = datetime.datetime.strptime(file.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S")
                     file_radar_type = file.split("/")[-2]
 
-                    if file_time - last_time[file_radar_type] < datetime.timedelta(minutes=self.min_data_interval):
+                    if file_time - last_time[file_radar_type] < datetime.timedelta(seconds=self.min_data_interval):
                         filter_stats["Time"] += 1
                         continue
 
@@ -480,25 +480,14 @@ class RadarDatasetFolder(data.Dataset):
                 file.writelines(lines)
 
 
-class RadarShipTargetFilterLandAndHidden(RadarDatasetFolder):
-
-    def __init__(self, root, data_folder, split='train', transform=True, dataset_name="radartest", label_folder="",
-                 data_ranges=(np.s_[:int(4096/3), 0:2000], np.s_[int(4096/3):int(2*4096/3), 0:2000], np.s_[int(2*4096/3):, 0:2000]), cache_labels=True,
-                 min_data_interval=0, remove_files_without_targets = True):
-
-        super(RadarShipTargetFilterLandAndHidden, self).__init__(root, data_folder=data_folder,
-            split=split, transform=transform, label_folder=label_folder,
-            dataset_name=dataset_name, data_ranges=data_ranges, cache_labels=cache_labels, filter_land=True,
-            land_is_target=False, remove_hidden_targets=True, remove_files_without_targets=remove_files_without_targets,
-            min_data_interval=min_data_interval)
-
-
 if __name__ == "__main__":
     from dataloader import DataLoader
 
     #np.s_[:int(4096/3), 0:2000], np.s_[int(4096/3):int(2*4096/3), 0:2000], np.s_[int(2*4096/3):, 0:2000]
-    valid = RadarShipTargetFilterLandAndHidden("/data/polarlys", data_folder="/nas0/", label_folder="/data/polarlys/labels/", split="train", dataset_name="2018")
+    valid = RadarDatasetFolder(root="/home/eivind/Documents/polarlys_datasets", cfg="/home/eivind/Documents/polarlys_datasets/polarlys_cfg.txt", split="train", dataset_name="2018")
+    valid.update_cached_labels("ais")
 
+    exit(0)
     print("mean: ")
     print(valid.get_mean())
     mean_cols = valid.get_mean_of_columns()
