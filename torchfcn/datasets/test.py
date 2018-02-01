@@ -24,6 +24,30 @@ def exponential_noise_gradient(r, c):
 
     return c
 
+def show_radar_data_with_label(data_path, label_path):
+    here = path.dirname(path.abspath(__file__))
+    from dataloader import DataLoader
+    self_data_loader = DataLoader("/nas0", sensor_config=path.join(here, "dataloader.json"))
+    # load image
+    basename = path.splitext(data_path)[0]
+    t = self_data_loader.get_time_from_basename(basename)
+    sensor, sensor_index, subsensor_index = self_data_loader.get_sensor_from_basename(basename)
+
+    img = self_data_loader.load_image(t, sensor, sensor_index, subsensor_index)
+    label = np.load(label_path)
+
+    # unlabel data blocked by mast for Radar0
+    if sensor_index == 0:
+        label[2000:2080, :] = -1
+
+    res = np.zeros((img.shape[0], img.shape[1], 3), dtype=np.uint8)
+    res[:, :, 0] = img
+    res[:, :, 1] = label == -1
+    res[:,:,1] = res[:,:,1]*255
+
+    res_img = Image.fromarray(res, 'RGB')
+    res_img.show()
+
 def directory_structure_from_filename(root):
     with open("/data/polarlys/labels/index.txt", "r") as index:
         with open("/data/polarlys/labels/dataset_index.txt", "w") as dataset:
@@ -142,7 +166,7 @@ def get_matrices():
     #land = np.load("/data/polarlys/labels/Radar1/2017-10-22-11_25_53_label_land.npy")
 
 
-def get_file_and_labels(data_folder, filename):
+def get_file_and_label(data_folder, filename):
     here = path.dirname(path.abspath(__file__))
     from dataloader import data_loader
     self_data_loader = data_loader("/data/polarlys/", sensor_config=path.join(here, "dataloader.json"))
@@ -171,12 +195,12 @@ def remove_empty_files(root):
         index.truncate()
         index.writelines(new_lines)
 
-
+show_radar_data_with_label('/nas0/2017-10-28/2017-10-28-04/Radar1/2017-10-28-04_25_20.bmp','/data/polarlys/labels/2017-10-28/2017-10-28-04/Radar1/2017-10-28-04_25_20_label.npy')
 #print(timeit.timeit("get_matrices()", number=100, globals=globals()))
 #path1 = "/media/stx/2017/Radar0/test.jpg"
 #path2 = "/mnt/stx/labels"
 
-get_file_and_labels("/nas0/", "2017-10-24-15_10_01.bmp")
+#get_file_and_label("/nas0/", "2017-10-24-15_10_01.bmp")
 #remove_empty_files("/data/polarlys/")
 #find_results_to_index_format()
 #construct_directory_structure_and_move("/data/polarlys/labels/Radar1", "/data/polarlys/labels")
