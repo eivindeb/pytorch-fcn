@@ -457,10 +457,57 @@ class RadarDatasetFolder(data.Dataset):
         if self.filter_land:
             label[(label == self.LABELS["land"]) | (label == self.LABELS["hidden"])] = self.LABELS["unlabeled"]
 
-        elif not "land" in self.class_names:
-            label[label == self.LABELS["land"]] = self.LABELS["background"]
+        else:
+            if "land" not in self.class_names:
+                label[(label == self.LABELS["land"]) | (label == self.LABELS["hidden"])] = self.LABELS["background"]
+            elif self.remove_hidden_targets:
+                label[(label == self.LABELS["ais"]) & (label == self.LABELS["hidden"])] = self.LABELS["background"]
 
         return label
+
+    def update_cached_labels(self, component):
+        processed_labels = []
+        for entry in tqdm.tqdm(self.files[self.split], total=len(self.files[self.split]), desc="Updating cached labels", leave=False):
+            if entry["label"] in processed_labels:
+                continue
+
+            label_path = entry["label"]
+            data_path = entry["data"][0]
+            try:
+                label = np.load(label_path).astype(np.int32)
+            except IOError as e:
+                print("Label does not exists at {}".format(label_path))
+                continue
+
+            if component in self.LABELS:
+                label[label == self.LABELS[component]] = self.LABELS["background"]
+            elif component == "chart":
+                label[(label == self.LABELS["land"]) | (label == self.LABELS["hidden"])] = self.LABELS["background"]
+
+            basename = osp.splitext(data_path)[0]
+            t = self.data_loader.get_time_from_basename(basename)
+            sensor, sensor_index, subsensor_index = self.data_loader.get_sensor_from_basename(basename)
+
+            if component == "ais":
+                ais = self.data_loader.load_ais_layer_sensor(t, sensor, sensor_index, subsensor_index)
+                label[ais == 1] = self.LABELS["ais"]
+            elif component == "chart":
+                land = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, subsensor_index)
+                hidden_by_land_mask = np.empty(land.shape, dtype=np.uint8)
+                hidden_by_land_mask[:, 0] = land[:, 0]
+                for col in range(1, land.shape[1]):
+                    np.bitwise_or(land[:, col], hidden_by_land_mask[:, col - 1], out=hidden_by_land_mask[:, col])
+
+                label[(hidden_by_land_mask == 1) & (land == 0)] = self.LABELS["hidden"]
+                label[land == 1] = self.LABELS["land"]
+
+            # unlabel data blocked by mast for Radar0
+            if sensor_index == 0:
+                label[2000:2080, :] = self.LABELS["unlabeled"]
+
+            np.save(label_path, label.astype(np.int8))
+            processed_labels.append(label_path)
+
 
     def generate_list_of_required_files(self):
         index_file = osp.join(self.dataset_folder, self.split) + ".txt"
