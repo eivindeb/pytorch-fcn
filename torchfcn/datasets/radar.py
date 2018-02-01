@@ -445,6 +445,10 @@ class RadarDatasetFolder(data.Dataset):
 
                     label[(hidden_by_land_mask == 1) & (land == 0)] = self.LABELS["hidden"]
 
+            # unlabel data blocked by mast for Radar0
+            if sensor_index == 0:
+                label[2000:2080, :] = self.LABELS["unlabeled"]
+
             if cached_label_missing:
                 if not osp.exists(osp.dirname(label_path)):
                     makedirs(osp.dirname(label_path))
