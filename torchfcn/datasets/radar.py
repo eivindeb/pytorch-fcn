@@ -114,75 +114,7 @@ class RadarDatasetFolder(data.Dataset):
 
         # TODO: fix path connections between location of dataset index,and data files and labels
         try:
-            with open(osp.join(self.dataset_folder, self.split), "r+") as file:
-                lines = file.readlines()
-                file_edited = False
-                lbl = None
-                for line_num, line in tqdm.tqdm(enumerate(lines), total=len(lines), desc="Reading dataset index file"):
-                    line_edited = False
-                    line = line.strip()
-                    filename, ranges = line.split(";")
-                    ranges_with_targets, ranges_without_targets = ranges.split("/")
-
-                    #img = self.data_loader.load_image(osp.join(self.data_folder, filename))
-
-                    #if img is None:  # temporary
-                    #    line_edited = True
-                    #    line = "removed"
-                    if False:
-                        pass
-                    else:
-                        for i, data_range in enumerate(self.data_ranges):
-                            if not self.remove_files_without_targets or str(data_range) in ranges_with_targets:
-                                self.files[split].append({"data": [osp.join(self.data_folder, filename), i],
-                                                          "label": osp.join(self.label_folder, filename.replace(".bmp", "_label.npy"))})
-                            elif str(data_range) in ranges_without_targets:
-                                continue
-                            else:  # new data range, check for targets in range and write result to index file
-                                line_edited = True
-                                edit_pos = line.rfind("/")
-
-                                if lbl is None:
-                                    lbl = self.get_label(osp.join(self.data_folder, filename),
-                                                         osp.join(self.label_folder, filename.replace(".bmp", "_label.npy")))
-
-                                if np.any(lbl[data_range] == self.LABELS["ais"]):
-                                    self.files[split].append({"data": [osp.join(self.data_folder, filename), i],
-                                                              "label": osp.join(self.label_folder, filename.replace(".bmp", "_label.npy"))})
-                                    line = line[:edit_pos] + str(data_range) + line[edit_pos:]
-                                else:
-                                    line = line[:edit_pos + 1] + str(data_range) + line[edit_pos + 1:]
-
-                    if line_edited:
-                        file_edited = True
-                        lines[line_num] = line+"\n"
-
-                    lbl = None
-
-                if file_edited:
-                    file.seek(0)
-                    file.truncate()
-                    lines = [line for line in lines if line != "removed"]
-                    file.writelines(lines)
-
-            if self.min_data_interval > 0:
-                self.files[self.split] = sorted(self.files[self.split], key=lambda x: datetime.datetime.strptime(x["data"][0].split("/")[-1].replace(".bmp", ""),
-                                                                               "%Y-%m-%d-%H_%M_%S"))
-                last_time = {radar_type: datetime.datetime(year=2000, month=1, day=1) for radar_type in self.radar_types}
-
-                new_files = []
-
-                for file_info in self.files[self.split]:
-                    file = file_info["data"][0]
-                    file_time = datetime.datetime.strptime(file.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S")
-                    file_radar_type = file.split("/")[-2]
-
-                    if file_time - last_time[file_radar_type] > datetime.timedelta(minutes=self.min_data_interval):
-                        last_time[file_radar_type] = file_time
-                        new_files.append(file_info)
-
-                self.files[self.split] = new_files
-
+            self.load_files_from_index(osp.join(self.dataset_folder, self.split) + ".txt")
         except IOError as e:
             print(e)
             print("No index file found for dataset, generating index for dataset instead")
@@ -225,6 +157,80 @@ class RadarDatasetFolder(data.Dataset):
         img = img.astype(np.uint8)
         lbl = lbl.numpy()
         return img, lbl
+
+    def load_files_from_index(self, index):
+        with open(index, "r+") as file:
+            lines = file.readlines()
+            file_edited = False
+            lbl = None
+            for line_num, line in tqdm.tqdm(enumerate(lines), total=len(lines), desc="Reading dataset index file"):
+                line_edited = False
+                line = line.strip()
+                filename, ranges = line.split(";")
+                ranges_with_targets, ranges_without_targets = ranges.split("/")
+
+                # img = self.data_loader.load_image(osp.join(self.data_folder, filename))
+
+                # if img is None:  # temporary
+                #    line_edited = True
+                #    line = "removed"
+                if False:
+                    pass
+                else:
+                    for i, data_range in enumerate(self.data_ranges):
+                        if not self.remove_files_without_targets or str(data_range) in ranges_with_targets:
+                            self.files[self.split].append({"data": [osp.join(self.data_folder, filename), i],
+                                                      "label": osp.join(self.label_folder,
+                                                                        filename.replace(".bmp", "_label.npy"))})
+                        elif str(data_range) in ranges_without_targets:
+                            continue
+                        else:  # new data range, check for targets in range and write result to index file
+                            line_edited = True
+                            edit_pos = line.rfind("/")
+
+                            if lbl is None:
+                                lbl = self.get_label(osp.join(self.data_folder, filename),
+                                                     osp.join(self.label_folder,
+                                                              filename.replace(".bmp", "_label.npy")))
+
+                            if np.any(lbl[data_range] == self.LABELS["ais"]):
+                                self.files[self.split].append({"data": [osp.join(self.data_folder, filename), i],
+                                                          "label": osp.join(self.label_folder,
+                                                                            filename.replace(".bmp", "_label.npy"))})
+                                line = line[:edit_pos] + str(data_range) + line[edit_pos:]
+                            else:
+                                line = line[:edit_pos + 1] + str(data_range) + line[edit_pos + 1:]
+
+                if line_edited:
+                    file_edited = True
+                    lines[line_num] = line + "\n"
+
+                lbl = None
+
+            if file_edited:
+                file.seek(0)
+                file.truncate()
+                lines = [line for line in lines if line != "removed"]
+                file.writelines(lines)
+
+        if self.min_data_interval > 0:
+            self.files[self.split] = sorted(self.files[self.split], key=lambda x: datetime.datetime.strptime(
+                x["data"][0].split("/")[-1].replace(".bmp", ""),
+                "%Y-%m-%d-%H_%M_%S"))
+            last_time = {radar_type: datetime.datetime(year=2000, month=1, day=1) for radar_type in self.radar_types}
+
+            new_files = []
+
+            for file_info in self.files[self.split]:
+                file = file_info["data"][0]
+                file_time = datetime.datetime.strptime(file.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S")
+                file_radar_type = file.split("/")[-2]
+
+                if file_time - last_time[file_radar_type] > datetime.timedelta(seconds=self.min_data_interval):
+                    last_time[file_radar_type] = file_time
+                    new_files.append(file_info)
+
+            self.files[self.split] = new_files
 
     def generate_dataset_file(self):
         def collect_data_files_recursively(parent, filenames=None):
