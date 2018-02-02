@@ -123,7 +123,7 @@ def main():
 
     #val_loader.dataset.files["valid"] = val_loader.dataset.files["valid"][0:900]
 
-    model = torchfcn.models.FCN32s(n_class=2)
+    model = torchfcn.models.FCN32s(n_class=train_loader.dataset.class_names.size)
     start_epoch = 0
     start_iteration = 0
     if resume:
