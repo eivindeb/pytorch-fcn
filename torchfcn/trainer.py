@@ -198,8 +198,10 @@ class Trainer(object):
 
             loss = cross_entropy2d(score, target, weight=torch.from_numpy(self.train_loader.dataset.class_weights).float().cuda(),
                                    size_average=self.size_average)
-            loss /= len(data)
+            loss /= len(data)  # average loss over batch
             if np.isnan(float(loss.data[0])):
+                print("Loss was NAN while training")
+                continue  # likely could not load image from nas, just continue
                 raise ValueError('loss is nan while training')
             loss.backward()
             self.optim.step()
