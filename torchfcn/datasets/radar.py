@@ -132,11 +132,17 @@ class RadarDatasetFolder(data.Dataset):
         t = self.data_loader.get_time_from_basename(basename)
         sensor, sensor_index, subsensor_index = self.data_loader.get_sensor_from_basename(basename)
 
-        img = self.data_loader.load_image(t, sensor, sensor_index, subsensor_index)[data_range]
-
+        img = self.data_loader.load_image(t, sensor, sensor_index)
         # load label
-        lbl = self.get_label(data_path, self.files[self.split][index]["label"])[data_range]
+        lbl = self.get_label(data_path, self.files[self.split][index]["label"])
 
+        if self.coordinate_system == "Cartesian":
+            cart = self.data_loader.transform_image_from_sensor(t, sensor, sensor_index, dim=2828, scale=3.39,
+                                                               image=np.dstack((img, lbl)).astype(np.int16), use_gpu=True)
+            img = cart[:, :, 0].astype(np.uint8)
+            lbl = cart[:, :, 1].astype(np.int8)
+        img = img[data_range]
+        lbl = lbl[data_range]
         if self._transform:
             return self.transform(img, lbl)
         else:
