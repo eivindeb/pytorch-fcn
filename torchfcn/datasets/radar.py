@@ -130,7 +130,7 @@ class RadarDatasetFolder(data.Dataset):
         # load image
         basename = osp.splitext(data_path)[0]
         t = self.data_loader.get_time_from_basename(basename)
-        sensor, sensor_index, subsensor_index = self.data_loader.get_sensor_from_basename(basename)
+        sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
 
         img = self.data_loader.load_image(t, sensor, sensor_index)
         # load label
@@ -424,8 +424,8 @@ class RadarDatasetFolder(data.Dataset):
         if not self.cache_labels or cached_label_missing:
             basename = osp.splitext(data_path)[0]
             t = self.data_loader.get_time_from_basename(basename)
-            sensor, sensor_index, subsensor_index = self.data_loader.get_sensor_from_basename(basename)
-            ais = self.data_loader.load_ais_layer_sensor(t, sensor, sensor_index, subsensor_index)
+            sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
+            ais = self.data_loader.load_ais_layer_sensor(t, sensor, sensor_index)
 
             if len(ais) == 0:
                 img = self.data_loader.load_image(data_path)
@@ -440,7 +440,7 @@ class RadarDatasetFolder(data.Dataset):
                 try:
                     land = np.load(label_path.replace(".npy", "_land.npy"))
                 except:
-                    land = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, subsensor_index)
+                    land = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index)
                 label[land == 1] = self.LABELS["land"]
 
                 if self.filter_land and len(land) != 0:
