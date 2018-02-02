@@ -143,28 +143,42 @@ class SeapathReader():
 
 
 class WaterLevelReader:
-    BASE_DIR = "/nas0"
-    WATERLEV_FNAME_FORMAT = os.path.join(BASE_DIR, "{:%Y-%m-%d}", "waterlevels.json")
-    SEAPATH_FNAME_FORMAT = os.path.join(BASE_DIR, "{:%Y-%m-%d}", "{:%Y-%m-%d-%H}", "Seapath", "{:%Y-%m-%d-%H_%M}.bin")
-
-    def __init__(self):
+    def __init__(self, base_path="/nas0"):
         self.cache = {}
+        self.BASE_DIR = base_path
 
     def waterlev_fname(self, t):
-        return self.WATERLEV_FNAME_FORMAT.format(t)
+        WATERLEV_FNAME_FORMAT = os.path.join(self.BASE_DIR, "{:%Y-%m-%d}", "waterlevels.json")
+        return WATERLEV_FNAME_FORMAT.format(t)
 
     def seapath_fname(self, t):
-        return self.SEAPATH_FNAME_FORMAT.format(t, t, t)
+        SEAPATH_FNAME_FORMAT = os.path.join(self.BASE_DIR, "{:%Y-%m-%d}", "{:%Y-%m-%d-%H}", "Seapath", "{:%Y-%m-%d-%H_%M}.bin")
+        return SEAPATH_FNAME_FORMAT.format(t, t, t)
 
     def dump_file(self, d, t):
-        with open(self.waterlev_fname(t), "w+") as f:
+        with open(self.waterlev_fname(t), "w") as f:
             json.dump(d, f)
 
     def load_file(self, t):
         with open(self.waterlev_fname(t), "r") as f:
             return json.load(f)
 
-    def retrieve_data_for_time(self, t):
+
+    @staticmethod
+    def retrieve(url, delay=2.0):
+        """Retrieve data from the given URL. Retry up to 3 times if response is not OK or empty."""
+        i = 0
+        while i < 3:
+            print(url)
+            res = requests.get(url)
+            if res.status_code == requests.codes.ok and len(res.text) > 0:
+                break
+            time.sleep(delay)
+            i += 1
+        return res
+
+
+    def retrieve_data_for_time(self, t, delay=2.0):
         """
         Retrieve water level for time t from sehavniva.no, using the actual position
         at that time from SeapathReader. Returns level value or None on error
@@ -181,12 +195,24 @@ class WaterLevelReader:
             except FileNotFoundError:
                 return None
 
+        d = dict()
+        d["lat"] = pos[0]
+        d["lon"] = pos[1]
+
+        url = "http://api.sehavniva.no/tideapi.php?lat={}&lon={}&refcode=cd&place=&lang=nn&file=&tide_request=locationlevels".format(
+            d["lat"], d["lon"])
+        res = self.retrieve(url, delay)
+        root = et.fromstring(res.text)
+        for locationlevel in root.iter("locationlevel"):
+            for reflevel in locationlevel.iter("reflevel"):
+                if reflevel.attrib["code"] in ("MSL", "NN2000", "NN1954"):
+                    d[reflevel.attrib["code"]] = float(reflevel.attrib["value"])
+
         # minimum query time period supported by sehavniva.no is 1 hour
         end = t + datetime.timedelta(hours=1)
         url = "http://api.sehavniva.no/tideapi.php?lat={}&lon={}&fromtime={}&totime={}&datatype=obs&refcode=cd&place=&file=&lang=nn&interval=10&dst=0&tzone=0&tide_request=locationdata".format(
-            pos[0], pos[1], t.isoformat(), end.isoformat())
-        print(url)
-        res = requests.get(url)
+            d["lat"], d["lon"], t.isoformat(), end.isoformat())
+        res = self.retrieve(url, delay)
 
         # return the first water level found in the retrieved xml document
         root = et.fromstring(res.text)
@@ -194,7 +220,10 @@ class WaterLevelReader:
         data = locationdata[0].findall("data")
         waterlevel = data[0].findall("waterlevel")
         level = waterlevel[0].attrib["value"]
-        return float(level)
+        d["obs"] = float(level)
+
+        return d
+
 
     def retrieve_data_for_day(self, t, backoff_delay=2.0):
         """
@@ -213,10 +242,10 @@ class WaterLevelReader:
             d = day + i * datetime.timedelta(minutes=30)
             if not d.isoformat() in self.cache:
                 updated = True
-                level = self.retrieve_data_for_time(d)
-                levels.update({d.isoformat(): level})
-                print("Updated water level {} {}".format(d, level))
-                if level is not None and backoff_delay is not None:
+                loc_data = self.retrieve_data_for_time(d)
+                levels.update({d.isoformat(): loc_data})
+                print("Updated water level {} {}".format(d, loc_data))
+                if loc_data is not None and backoff_delay is not None:
                     time.sleep(backoff_delay)
             else:
                 print("Cached water level {} {}".format(d, self.cache[d.isoformat()]))
@@ -224,6 +253,7 @@ class WaterLevelReader:
         if updated:
             self.dump_file(levels, t)
             self.cache.update(levels)
+
 
     @staticmethod
     def time_range(t):
@@ -237,28 +267,29 @@ class WaterLevelReader:
             return t.replace(microsecond=0, second=0, minute=30), t.replace(microsecond=0, second=0, minute=0) + datetime.timedelta(hours=1)
         return t.replace(microsecond=0, second=0, minute=0), t.replace(microsecond=0, second=0, minute=30)
 
-    def get_waterlevel(self, t):
+
+    def get_waterlevel(self, t, code="obs"):
         """
         Get interpolated water level for datetime t. Raises FileNotFound if no data on
-        disk, or KeyError if values are missing from the data set.
+        disk, or KeyError if values are missing from the data set for the given time.
         """
         start_time, end_time = self.time_range(t)
         try:
             # first try the cache
-            start_level = self.cache[start_time.isoformat()]
-            end_level = self.cache[end_time.isoformat()]
+            start_data = self.cache[start_time.isoformat()]
+            end_data = self.cache[end_time.isoformat()]
         except KeyError:
             # nope, not in cache; try to update cache from disk
-            levels = self.load_file(t)
-            self.cache.update(levels)
-            start_level = self.cache[start_time.isoformat()]
-            end_level = self.cache[end_time.isoformat()]
+            day_data = self.load_file(t)
+            self.cache.update(day_data)
+            start_data = self.cache[start_time.isoformat()]
+            end_data = self.cache[end_time.isoformat()]
 
-        if start_level is None or end_level is None:
-            return None
+        if start_data is None or end_data is None:
+            raise KeyError
 
         f = (t - start_time).total_seconds() / 1800.0
-        return start_level + f * (end_level - start_level)
+        return start_data[code] + f * (end_data[code] - start_data[code])
 
 
 class AisReader():
@@ -478,6 +509,7 @@ class DataLoader():
         self.sensor_config_path = sensor_config
         self.TYPE_CAMERA = 0
         self.TYPE_RADAR = 1
+        self.wlr = WaterLevelReader(self.path)
         
         try:
             with open(sensor_config, 'r') as f:
@@ -487,11 +519,16 @@ class DataLoader():
             print('data_loader: Unable to read configuration file {}'.format(sensor_config))
         
     
-    def get_waterlevel(self, t):
+    def get_waterlevel(self, t, code="obs"):
         """
         Read waterlevel above chart zero level for the position of Polarlys at a specific time stamp.
+        Recognized value codes: "obs" (observed water level), "MSL" (mean sea level),
+        "NN1954" (Normal null 1954), "NN2000" (Normal null 2000).
         """
-        raise NotImplementedError
+        try:
+            return self.wlr.get_waterlevel(t, code)
+        except:
+            return None
         
         
     def get_seapath_data(self, t):
@@ -555,16 +592,17 @@ class DataLoader():
         """
         file_basename must contain full path, eg. '2017-10-13\2017-10-13-15\Cam0\Lens1\2017-10-13-15_08_50_470000'
         """
-        sensor_type, sensor_index, subsensor_index = None, None, None
+        sensor_type, sensor = None, None
         if file_basename.find('Cam') >= 0:
             sensor_type = self.TYPE_CAMERA
             sensor_index = int(file_basename[file_basename.find('Cam') + 3])
             subsensor_index = int(file_basename[file_basename.find('Lens') + 4])
+            sensor = (sensor_index, subsensor_index)
         elif file_basename.find('Radar') >= 0:
             sensor_type = self.TYPE_RADAR
-            sensor_index = int(file_basename[file_basename.find('Radar') + 5])
+            sensor = int(file_basename[file_basename.find('Radar') + 5])
             
-        return sensor_type, sensor_index, subsensor_index
+        return sensor_type, sensor
  
 
     def get_time_from_basename(self, file_basename):
@@ -577,26 +615,26 @@ class DataLoader():
         return t
        
         
-    def get_sensor_folder(self, sensor_type, sensor_index, subsensor_index=None):
+    def get_sensor_folder(self, sensor_type, sensor):
         folder = None
         if sensor_type == self.TYPE_CAMERA:
-            folder = os.path.join('Cam{}'.format(sensor_index), 'Lens{}'.format(subsensor_index))
+            folder = os.path.join('Cam{}'.format(sensor[0]), 'Lens{}'.format(sensor[1]))
         elif sensor_type == self.TYPE_RADAR:
-            folder = 'Radar{}'.format(sensor_index)
+            folder = 'Radar{}'.format(sensor)
             
         return folder
     
     
-    def get_sensor_config(self, sensor_type, sensor_index, subsensor_index=None):
+    def get_sensor_config(self, sensor_type, sensor):
         with open(self.sensor_config_path, 'r') as f:
             self.sensor_config = json.load(f)
         cfg = {}
         if sensor_type == self.TYPE_CAMERA:
-            sensor_str = 'Cam{}'.format(sensor_index)
-            subsensor_str = 'Lens{}'.format(subsensor_index)
+            sensor_str = 'Cam{}'.format(sensor[0])
+            subsensor_str = 'Lens{}'.format(sensor[1])
             cfg = self.sensor_config[sensor_str][subsensor_str]
         elif sensor_type == self.TYPE_RADAR:
-            sensor_str = 'Radar{}'.format(sensor_index)
+            sensor_str = 'Radar{}'.format(sensor)
             cfg = self.sensor_config[sensor_str]
             
         return cfg
@@ -612,13 +650,16 @@ class DataLoader():
         return ext
     
     
-    def load_image(self, t, sensor_type, sensor_index, subsensor_index=None):
+    def load_image(self, t, sensor_type, sensor):
         """
         Load an image for a given time tag and sensor from the Polarlys data set.
+        The argument 'sensor_type' can be either TYPE_CAMERA or TYPE_RADAR.
+        For TYPE_CAMERA, the argument 'sensor' is a tuple of indices (cam,subcam) of the camera sensor to load image for.
+        For TYPE_RADAR, the argument 'sensor' is the index of the radar sensor to load image for.
         The method returns a numpy array of shape (1920,2560,3) of type np.uint8 for camera images.
         The method returns a numpy array of shape (4096,3400) of type np.uint8 for radar images.
         """
-        file_name = self.get_filename_sec(t, self.get_sensor_folder(sensor_type, sensor_index, subsensor_index), self.get_image_extension(sensor_type))
+        file_name = self.get_filename_sec(t, self.get_sensor_folder(sensor_type, sensor), self.get_image_extension(sensor_type))
         if not file_name or not os.path.isfile(file_name):
             return []
         
@@ -675,18 +716,19 @@ class DataLoader():
         return layer, pva
         
         
-    def load_chart_layer_sensor(self, t, sensor_type, sensor_index, subsensor_index=None, binary=False):
+    def load_chart_layer_sensor(self, t, sensor_type, sensor, binary=False):
         """
         Load chart layer for a given time tag and sensor. 
-        The argument 'dim' is the height and width of the chart requested from the chart server in pixels.
-        The argument 'scale' is the number of meters pr. pixel in the image requested from the chart server.
+        The argument 'sensor_type' can be either TYPE_CAMERA or TYPE_RADAR.
+        For TYPE_CAMERA, the argument 'sensor' is a tuple of indices (cam,subcam) of the camera sensor to load layer for.
+        For TYPE_RADAR, the argument 'sensor' is the index of the radar sensor to load layer for.
         The argument 'binary' decides if the output is a binary land mask or grayscale.
         The method returns a numpy array of shape (height,width) of type np.uint8.
         Height and width of returned image is the same as in original sensor image.
         """
         layer = []
         try:
-            meta = self.get_metadata(t, sensor_type, sensor_index, subsensor_index)
+            meta = self.get_metadata(t, sensor_type, sensor)
             if sensor_type == self.TYPE_CAMERA:
                 pos = meta['own_vessel']['position']
             else:
@@ -703,7 +745,7 @@ class DataLoader():
                 chart_large = np.array(im_pil, dtype=np.uint8).reshape(dim,dim)
             if binary:
                 chart_large = (chart_large[:,:] != 22).astype(np.uint8)
-            chart_large_sensor = self.transform_image_to_sensor(t, sensor_type, sensor_index, chart_large, pos, subsensor_index, scale, use_gpu=True)
+            chart_large_sensor = self.transform_image_to_sensor(t, sensor_type, sensor, chart_large, pos, scale, use_gpu=True)
 
             scale = 4
             url = 'http://navdemo:9669/WmsServer?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap&FORMAT=image/png&LAYERS=CHART&styles={}&HEIGHT={}&WIDTH={}&REFLATLON={},{},{},{},{},{}'.format(style, dim, dim, pos[0]*np.pi/180, pos[1]*np.pi/180, dim//2, dim//2, scale, 0)
@@ -712,7 +754,7 @@ class DataLoader():
                 chart_medium = np.array(im_pil, dtype=np.uint8).reshape(dim,dim)
             if binary:
                 chart_medium = (chart_medium[:,:] != 22).astype(np.uint8)
-            chart_medium_sensor = self.transform_image_to_sensor(t, sensor_type, sensor_index, np.stack([chart_medium, np.zeros((dim,dim), dtype=np.uint8) + 1], axis=2), pos, subsensor_index, scale, use_gpu=True)
+            chart_medium_sensor = self.transform_image_to_sensor(t, sensor_type, sensor, np.stack([chart_medium, np.zeros((dim,dim), dtype=np.uint8) + 1], axis=2), pos, scale, use_gpu=True)
 
             scale = 0.5
             url = 'http://navdemo:9669/WmsServer?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap&FORMAT=image/png&LAYERS=CHART&styles={}&HEIGHT={}&WIDTH={}&REFLATLON={},{},{},{},{},{}'.format(style, dim, dim, pos[0]*np.pi/180, pos[1]*np.pi/180, dim//2, dim//2, scale, 0)
@@ -721,7 +763,7 @@ class DataLoader():
                 chart_small = np.array(im_pil, dtype=np.uint8).reshape(dim,dim)
             if binary:
                 chart_small = (chart_small[:,:] != 22).astype(np.uint8)
-            chart_small_sensor = self.transform_image_to_sensor(t, sensor_type, sensor_index, np.stack([chart_small, np.zeros((dim,dim), dtype=np.uint8) + 1], axis=2), pos, subsensor_index, scale, use_gpu=True)
+            chart_small_sensor = self.transform_image_to_sensor(t, sensor_type, sensor, np.stack([chart_small, np.zeros((dim,dim), dtype=np.uint8) + 1], axis=2), pos, scale, use_gpu=True)
             
             layer = chart_large_sensor
             layer = layer * (1 - chart_medium_sensor[:,:,1]) + chart_medium_sensor[:,:,0] * chart_medium_sensor[:,:,1]
@@ -779,20 +821,65 @@ class DataLoader():
             
         return layer
               
-     
-    def load_lbl_targets(self, t, max_range=20000):
+    
+    def load_terrain_layer(self, t, dim, scale, binary=False):
+        raise NotImplementedError
+        
+        
+    def load_terrain_layer_sensor(self, t, sensor_type, sensor, binary=False):
+        raise NotImplementedError
+        
+        
+    def load_lbl_targets(self, t, max_range=20000, allow_automatic=True):
+# =============================================================================
+#         targets = {}
+#         if False:
+#             # Get manual labelling
+#             pass
+#         elif allow_automatic:
+#             # Get automatic labelling
+#             instance = 0
+#             ais_targets, ais_polygons, pva = self.load_ais_targets(t, max_range)
+#             for mmsi, target in ais_targets.items():
+#                 if mmsi in ais_polygons.keys():
+#                     target = {}
+#                     target['source'] = 'ais'
+#                     target['raw'] = ais_targets[mmsi]
+#                     target['raw']['mmsi'] = mmsi
+#                     target['position_geog'] = target['raw']['position']
+#                     target['position_ned'] = self.transform_points_to_ned(np.array(target['raw']['position']))
+#                     target['true_heading'] = target['raw']['true_heading']
+#                     target['sog'] = target['raw']['sog']
+#                     target['cog'] = target['raw']['cog']
+#                     target['rot'] = target['raw']['rot']
+#                     p = np.array(ais_polygons[mmsi])
+#                     target['polygon_geog'] = ais_polygons[mmsi]
+#                     target['box'] = [p[:,0].min(), p[:,0].max(), p[:,1].min(), p[:,1].max()]
+#                     target['shape'] = 'ship'
+#                     dim = np.array(target['raw']['dimension'])
+#                     target['dim'] = [dim[0] + dim[1], dim[2] + dim[3], 0.3 * (dim[0] + dim[1])] # Length, width, height
+#                     target['position']
+#                     target['class']['object'] = 1 
+#                     target['class']['dynamic'] = 1
+#                     target['class']['type'] = 1
+#                     target['softmax_idx'] = [1,3,5,123]
+#                     targets[instance] = target
+#             nav_targets, nav_polygons, pva = self.load_nav_targets(t, max_range)
+#         
+#         return targets
+# =============================================================================
         raise NotImplementedError
 
 
-    def load_lbl_targets_sensor(self, t, sensor_type, sensor_index, subsensor_index=None):
+    def load_lbl_targets_sensor(self, t, sensor_type, sensor, allow_automatic=True):
         raise NotImplementedError
 
      
-    def load_lbl_layer(self, t, dim, scale, binary=False):
+    def load_lbl_layer(self, t, dim, scale, binary=False, allow_automatic=True):
         raise NotImplementedError
 
     
-    def load_lbl_layer_sensor(self, t, sensor_type, sensor_index, subsensor_index=None, binary=False):
+    def load_lbl_layer_sensor(self, t, sensor_type, sensor, binary=False, allow_automatic=True):
         raise NotImplementedError
 
         
@@ -800,7 +887,7 @@ class DataLoader():
         raise NotImplementedError
 
 
-    def load_nav_targets_sensor(self, t, sensor_type, sensor_index, subsensor_index=None):
+    def load_nav_targets_sensor(self, t, sensor_type, sensor):
         raise NotImplementedError
     
     
@@ -808,7 +895,7 @@ class DataLoader():
         raise NotImplementedError
     
     
-    def load_nav_layer_sensor(self, t, sensor_type, sensor_index, subsensor_index=None, binary=False):
+    def load_nav_layer_sensor(self, t, sensor_type, sensor, binary=False):
         raise NotImplementedError
 
 
@@ -826,7 +913,8 @@ class DataLoader():
         pva = {}
         try:
             pva = self.get_seapath_data(t)
-            targets = self.get_ais_targets(t, pva['position'], max_range)
+            targets_raw = self.get_ais_targets(t, pva['position'], max_range)
+            targets = self.prepare_ais_targets(targets_raw)
             polygons = self.get_target_polygons(targets)
         except:
             traceback.print_stack()
@@ -837,14 +925,17 @@ class DataLoader():
         return targets, polygons, pva
 
     
-    def load_ais_targets_sensor(self, t, sensor_type, sensor_index, subsensor_index=None):
+    def load_ais_targets_sensor(self, t, sensor_type, sensor):
         """
         Load AIS targets for a given time tag and sensor. 
+        The argument 'sensor_type' can be either TYPE_CAMERA or TYPE_RADAR.
+        For TYPE_CAMERA, the argument 'sensor' is a tuple of indices (cam,subcam) of the camera sensor to load layer for.
+        For TYPE_RADAR, the argument 'sensor' is the index of the radar sensor to load layer for.
         The method returns a dictionary of AIS polygons with MMSI as key.
         """
         polygons_sensor = {}
         try:
-            meta = self.get_metadata(t, sensor_type, sensor_index, subsensor_index)
+            meta = self.get_metadata(t, sensor_type, sensor)
             dim_x, dim_y = meta['image_dim'][0], meta['image_dim'][1]
             cfg_ais = self.sensor_config['AIS']
             
@@ -853,7 +944,7 @@ class DataLoader():
                 polygons = self.get_target_polygons(targets)
                 polygons_sensor = []
                 for id in polygons.keys():
-                    poly_sensor = self.transform_points_to_sensor(t, polygons[id], sensor_type, sensor_index, subsensor_index, invalidate_pixels=False)
+                    poly_sensor = self.transform_points_to_sensor(t, polygons[id], sensor_type, sensor, invalidate_pixels=False)
                     outside = np.logical_or.reduce((poly_sensor[:,0] < 0, poly_sensor[:,0] >= dim_x, poly_sensor[:,1] < 0, poly_sensor[:,1] >= dim_y))
                     if not outside.all():
                         polygons_sensor.append(poly_sensor)
@@ -865,7 +956,7 @@ class DataLoader():
                 polygons_sensor = []
                 for id in polygons_start.keys():
                     if id in polygons_end.keys():
-                        poly_sensor = self.transform_points_to_sensor(t, (polygons_start[id], polygons_end[id]), sensor_type, sensor_index, invalidate_pixels=False)
+                        poly_sensor = self.transform_points_to_sensor(t, (polygons_start[id], polygons_end[id]), sensor_type, sensor, invalidate_pixels=False)
                         if (poly_sensor[:,0].max() - poly_sensor[:,0].min()) > dim_x/2:
                             # Handle polygons at bearing == 0 degrees
                             poly_sensor[poly_sensor[:,0] > dim_x/2,0] -= dim_x
@@ -914,18 +1005,21 @@ class DataLoader():
         return layer, pva
         
     
-    def load_ais_layer_sensor(self, t, sensor_type, sensor_index, subsensor_index=None, binary=False):
+    def load_ais_layer_sensor(self, t, sensor_type, sensor, binary=False):
         """
         Load AIS layer for a given time tag and sensor. 
+        The argument 'sensor_type' can be either TYPE_CAMERA or TYPE_RADAR.
+        For TYPE_CAMERA, the argument 'sensor' is a tuple of indices (cam,subcam) of the camera sensor to load layer for.
+        For TYPE_RADAR, the argument 'sensor' is the index of the radar sensor to load layer for.
         The argument 'binary' decides if the output is a binary mask or grayscale according to classification.
         The method returns a numpy array of shape (height,width) of type np.uint8.
         Height and width matches the dimension of the original sensor image.
         """
         layer = []
         try:
-            meta = self.get_metadata(t, sensor_type, sensor_index, subsensor_index)
+            meta = self.get_metadata(t, sensor_type, sensor)
             dim_x, dim_y = meta['image_dim'][0], meta['image_dim'][1]
-            polygons_sensor = self.load_ais_targets_sensor(t, sensor_type, sensor_index, subsensor_index)
+            polygons_sensor = self.load_ais_targets_sensor(t, sensor_type, sensor)
             layer = self.draw_polygon_layer(polygons_sensor, dim_x, dim_y)
         except:
             traceback.print_stack()
@@ -936,15 +1030,17 @@ class DataLoader():
         return layer
 
 
-    def load_sky_polygon_sensor(self, t, sensor_type, sensor_index, subsensor_index=None):
+    def load_sky_polygon_sensor(self, t, sensor_type, sensor):
         """
-        Load sky polygon for a given time tag and sensor.
+        Load sky polygon for a given time tag and sensor. Only supported for TYPE_CAMERA.
+        The argument 'sensor_type' has to be TYPE_CAMERA.
+        The argument 'sensor' is a tuple of indices (cam,subcam) of the camera sensor to load polygons for.
         The method returns a numpy array with polygon of the sky in image.
         """
         points = np.zeros((360, 3))
         try:
-            meta = self.get_metadata(t, sensor_type, sensor_index, subsensor_index)
-            cfg_sensor = self.get_sensor_config(sensor_type, sensor_index, subsensor_index)
+            meta = self.get_metadata(t, sensor_type, sensor)
+            cfg_sensor = self.get_sensor_config(sensor_type, sensor)
             cfg_seapath = self.sensor_config['Seapath']
             if sensor_type == self.TYPE_CAMERA:
 
@@ -959,8 +1055,8 @@ class DataLoader():
                 # Create circle with radius equal to range
                 points[:, 0] = dist_to_horizon * np.cos(np.linspace(0, 2 * np.pi, points.shape[0]))
                 points[:, 1] = dist_to_horizon * np.sin(np.linspace(0, 2 * np.pi, points.shape[0]))
-                points = self.transform_points_to_camera(t, points, sensor_index, subsensor_index,
-                                                         invalidate_pixels=True)
+                points = self.transform_points_to_camera(t, points, sensor, invalidate_pixels=True)
+                
                 # Add points on both sides and the top corners of picture
                 points = np.array((points[points[:, 1].argsort()]))
                 points = np.squeeze(points[np.nonzero(points[:, 1] > -1),:], axis=0)
@@ -980,17 +1076,19 @@ class DataLoader():
         return points
 
 
-    def load_sky_layer_sensor(self, t, sensor_type, sensor_index, subsensor_index=None):
+    def load_sky_layer_sensor(self, t, sensor_type, sensor):
         """
-        Load sky layer for a given time tag and sensor. 
+        Load sky layer for a given time tag and sensor. Only supported for TYPE_CAMERA.
+        The argument 'sensor_type' has to be TYPE_CAMERA.
+        The argument 'sensor' is a tuple of indices (cam,subcam) of the camera sensor to load layer for.
         The method returns a numpy array of shape (height,width) of type np.uint8.
         Height and width matches the dimension of the original sensor image.
         The returned values are 1 for pixels above horizon and 0 for all other pixels.
         """
         layer = []
         try:
-            meta = self.get_metadata(t, sensor_type, sensor_index, subsensor_index)
-            cfg_sensor = self.get_sensor_config(sensor_type, sensor_index, subsensor_index)
+            meta = self.get_metadata(t, sensor_type, sensor)
+            cfg_sensor = self.get_sensor_config(sensor_type, sensor)
             cfg_seapath = self.sensor_config['Seapath']
             if sensor_type == self.TYPE_CAMERA:
                 dim = 4000
@@ -1006,7 +1104,7 @@ class DataLoader():
                 hor = np.zeros((dim,dim), dtype=np.uint8)
                 x, y = circle(dim//2, dim//2, dist_to_horizon//scale, (dim,dim))
                 hor[x,y] = 1
-                layer = self.transform_image_to_sensor(t, sensor_type, sensor_index, hor, meta['own_vessel']['position'], subsensor_index, scale=scale, use_gpu=True)
+                layer = self.transform_image_to_sensor(t, sensor_type, sensor, hor, meta['own_vessel']['position'], scale=scale, use_gpu=True)
                 layer = (1-layer)
         except:
             traceback.print_stack()
@@ -1017,15 +1115,19 @@ class DataLoader():
         return layer
         
         
-    def transform_points(self, t, points, from_sensor_type, to_sensor_type, from_sensor_index, to_sensor_index, from_subsensor_index=None, to_subsensor_index=None):
+    def transform_points(self, t, points, from_sensor_type, to_sensor_type, from_sensor, to_sensor):
         """
         Transform points in pixel coordinates (X,Y) from one sensor frame to another. Assumes that points are in the sea plane.
         The argument 'points' should be an array of shape (n,2), where n is the number of points.
         The argument 'points' can be a numpy array, torch.Tensor or torch.cuda.Tensor. If the type is numpy,
         transformed points are returned as np.float64, else the points are transformed using the GPU and 
         returned as torch.cuda.DoubleTensor.
-        The argument 'from_subsensor_index' is only required if 'from_sensor_type' is TYPE_CAMERA.
-        The argument 'to_subsensor_index' is only required if 'to_sensor_type' is TYPE_CAMERA.
+        The argument 'from_sensor_type' can be either TYPE_CAMERA or TYPE_RADAR.
+        The argument 'to_sensor_type' can be either TYPE_CAMERA or TYPE_RADAR.
+        For TYPE_CAMERA, the argument 'from_sensor' is a tuple of indices (cam,subcam) of the camera sensor to transform from.
+        For TYPE_RADAR, the argument 'from_sensor' is the index of the radar sensor to transform from.
+        For TYPE_CAMERA, the argument 'to_sensor' is a tuple of indices (cam,subcam) of the camera sensor to transform to.
+        For TYPE_RADAR, the argument 'to_sensor' is the index of the radar sensor to transform to.
         The method returns an array of shape (n,2), where n is the number of input points.
         If a point falls outside the image boundaries, the coordinates for this points are set to -1.
         """
@@ -1034,7 +1136,7 @@ class DataLoader():
         
         if from_sensor_type == self.TYPE_RADAR:
             points = (points, points.clone()) if use_gpu else (points, points.copy())
-        points = self.transform_points_from_sensor(t, points, from_sensor_type, from_sensor_index, from_subsensor_index)
+        points = self.transform_points_from_sensor(t, points, from_sensor_type, from_sensor)
         if use_gpu:
             not_valid = points[:,0].eq(0) & points[:,1].eq(0) & points[:,2].eq(0)
         else:
@@ -1042,7 +1144,7 @@ class DataLoader():
         
         if to_sensor_type == self.TYPE_RADAR:
             points = (points, points.clone()) if use_gpu else (points, points.copy())
-        points = self.transform_points_to_sensor(t, points, to_sensor_type, to_sensor_index, to_subsensor_index)
+        points = self.transform_points_to_sensor(t, points, to_sensor_type, to_sensor)
         if use_gpu:
             not_valid = (points[:,0].lt(0) | points[:,1].lt(0) | not_valid)
         else:
@@ -1107,7 +1209,7 @@ class DataLoader():
         return (1 / scale) * points
         
         
-    def transform_points_from_sensor(self, t, points, from_sensor_type, from_sensor_index, from_subsensor_index=None):
+    def transform_points_from_sensor(self, t, points, sensor_type, sensor):
         """
         Transform numpy array of sensor image pixel coordinates (X,Y) to points in degrees in (lat,lon,hgt). 
         Assumes that points are in the sea plane.
@@ -1115,9 +1217,12 @@ class DataLoader():
         The argument 'points' can be a numpy array, torch.Tensor or torch.cuda.Tensor. If the type is numpy,
         transformed points are returned as np.float64, else the points are transformed using the GPU and 
         returned as torch.cuda.DoubleTensor.
-        If 't_sensor_type' is TYPE_RADAR, the argument 'points' can also be tuple of (n,3) arrays, the
+        If 'sensor_type' is TYPE_RADAR, the argument 'points' can also be tuple of (n,3) arrays, the
         first array valid at start of scan, and the second array valid at end of the scan. If not a tuple, 
         the points are assumed to be valid at end of scan.
+        The argument 'sensor_type' can be either TYPE_CAMERA or TYPE_RADAR.
+        For TYPE_CAMERA, the argument 'sensor' is a tuple of indices (cam,subcam) of the camera sensor to transform from.
+        For TYPE_RADAR, the argument 'sensor' is the index of the radar sensor to transform from.
         The method returns an array of shape (n,3), where n is the number of input points.
         If a point is pointing above the horizon, the coordinates for this points are set to (0,0,0).
         """
@@ -1128,10 +1233,10 @@ class DataLoader():
             use_gpu = gpu and torch.is_tensor(points)
             points = self.transfer_gpu(points, use_gpu)
 
-        meta = self.get_metadata(t, from_sensor_type, from_sensor_index, from_subsensor_index)
+        meta = self.get_metadata(t, sensor_type, sensor)
         
-        if from_sensor_type == self.TYPE_CAMERA:
-            points = self.transform_points_from_camera(t, points, from_sensor_index, from_subsensor_index)
+        if sensor_type == self.TYPE_CAMERA:
+            points = self.transform_points_from_camera(t, points, sensor)
             pos = meta['own_vessel']['position'].copy()
             pos[2] = self.get_spt_height(meta['own_vessel']['attitude'], self.sensor_config['Seapath']['navref_height'])
             if use_gpu:
@@ -1147,14 +1252,14 @@ class DataLoader():
             if isinstance(points, tuple):
                 points_start, points_end = points
                 frac_interpolation = points_end[:,0] / meta['image_dim'][0]
-                points_start = self.transform_points_from_radar(t, points_start, from_sensor_index, start_of_scan=True)
+                points_start = self.transform_points_from_radar(t, points_start, sensor, start_of_scan=True)
                 if use_gpu:
                     not_valid_start = points_start[:,0].eq(0) & points_start[:,1].eq(0) & points_start[:,2].eq(0)
                 else:
                     not_valid_start = np.logical_and.reduce((points_start[:,0] == 0, points_start[:,1] == 0, points_start[:,2] == 0))
                 points_start = self.transform_points_from_ned(points_start, pos_start)
                 
-                points_end = self.transform_points_from_radar(t, points_end, from_sensor_index, start_of_scan=False)
+                points_end = self.transform_points_from_radar(t, points_end, sensor, start_of_scan=False)
                 if use_gpu:
                     not_valid = ((points_end[:,0].eq(0) & points_end[:,1].eq(0) & points_end[:,2].eq(0)) | not_valid_start)
                 else:
@@ -1169,7 +1274,7 @@ class DataLoader():
                 else:
                     points = frac_interpolation.reshape(-1,1) * points_start + (1 - frac_interpolation.reshape(-1,1)) * points_end
             else:
-                points = self.transform_points_from_radar(t, points, from_sensor_index, start_of_scan=False)
+                points = self.transform_points_from_radar(t, points, sensor, start_of_scan=False)
                 if use_gpu:
                     not_valid = (points[:,0].eq(0) & points[:,1].eq(0) & points[:,2].eq(0))
                 else:
@@ -1184,16 +1289,19 @@ class DataLoader():
         return points
     
 
-    def transform_points_to_sensor(self, t, points, to_sensor_type, to_sensor_index, to_subsensor_index=None, invalidate_pixels=True):
+    def transform_points_to_sensor(self, t, points, sensor_type, sensor, invalidate_pixels=True):
         """
         Transform points in degrees in (lat,lon,hgt) to pixels coordinates (X,Y) in sensor image.
         The argument 'points' should be an array of shape (n,3), where n is the number of points.
         The argument 'points' can be a numpy array, torch.Tensor or torch.cuda.Tensor. If the type is numpy,
         transformed points are returned as np.float64, else the points are transformed using the GPU and 
         returned as torch.cuda.DoubleTensor.
-        If 't_sensor_type' is TYPE_RADAR, the argument 'points' can also be tuple of (n,3) arrays, the
+        If 'sensor_type' is TYPE_RADAR, the argument 'points' can also be tuple of (n,3) arrays, the
         first array valid at start of scan, and the second array valid at end of the scan. If not a tuple, 
         the points are assumed to be valid at end of scan.
+        The argument 'sensor_type' can be either TYPE_CAMERA or TYPE_RADAR.
+        For TYPE_CAMERA, the argument 'sensor' is a tuple of indices (cam,subcam) of the camera sensor to transform to.
+        For TYPE_RADAR, the argument 'sensor' is the index of the radar sensor to transform to.
         If the argument 'invalidate_pixels' is True, coordinates for points outside the image boundaries are set to -1.
         The method returns an array of shape (n,2), where n is the number of input points.
         """
@@ -1204,13 +1312,13 @@ class DataLoader():
             use_gpu = gpu and torch.is_tensor(points)
             points = self.transfer_gpu(points, use_gpu)
             
-        meta = self.get_metadata(t, to_sensor_type, to_sensor_index, to_subsensor_index)
+        meta = self.get_metadata(t, sensor_type, sensor)
         
-        if to_sensor_type == self.TYPE_CAMERA:
+        if sensor_type == self.TYPE_CAMERA:
             pos = meta['own_vessel']['position'].copy()
             pos[2] = self.get_spt_height(meta['own_vessel']['attitude'], self.sensor_config['Seapath']['navref_height'])
             points = self.transform_points_to_ned(points, pos)
-            points = self.transform_points_to_camera(t, points, to_sensor_index, to_subsensor_index, invalidate_pixels=invalidate_pixels)
+            points = self.transform_points_to_camera(t, points, sensor, invalidate_pixels=invalidate_pixels)
         else:
             pos_start = meta['own_vessel_start']['position'].copy()
             pos_start[2] = self.get_spt_height(meta['own_vessel_start']['attitude'], self.sensor_config['Seapath']['navref_height'])
@@ -1220,9 +1328,9 @@ class DataLoader():
                 dim_x = meta['image_dim'][0]
                 points_start, points_end = points
                 points_start = self.transform_points_to_ned(points_start, pos_start)
-                points_start = self.transform_points_to_radar(t, points_start, to_sensor_index, start_of_scan=True, invalidate_pixels=invalidate_pixels) 
+                points_start = self.transform_points_to_radar(t, points_start, sensor, start_of_scan=True, invalidate_pixels=invalidate_pixels) 
                 points_end = self.transform_points_to_ned(points_end, pos_end)
-                points_end = self.transform_points_to_radar(t, points_end, to_sensor_index, start_of_scan=False, invalidate_pixels=invalidate_pixels)
+                points_end = self.transform_points_to_radar(t, points_end, sensor, start_of_scan=False, invalidate_pixels=invalidate_pixels)
                 
                 # Interpolate points to correct for duration of radar scan (about 2.5s)
                 if use_gpu:
@@ -1242,18 +1350,19 @@ class DataLoader():
                     points[valid,:] = frac_interpolation.reshape(-1,1) * points_start[valid,:] + (1 - frac_interpolation.reshape(-1,1)) * points_end[valid,:]
             else:  
                 points = self.transform_points_to_ned(points, pos_end)
-                points = self.transform_points_to_radar(t, points, to_sensor_index, start_of_scan=False, invalidate_pixels=invalidate_pixels)
+                points = self.transform_points_to_radar(t, points, sensor, start_of_scan=False, invalidate_pixels=invalidate_pixels)
         
         return points
         
         
-    def transform_points_from_camera(self, t, points, from_sensor_index, from_subsensor_index, ref_location=None, head_up=False):
+    def transform_points_from_camera(self, t, points, sensor, ref_location=None, head_up=False):
         """
         Transform numpy array of camera image pixel coordinates (X,Y) to points in meters in (N,E,D) or heading frame. Assumes that points are in the sea plane.
         The argument 'points' should be an array of shape (n,2), where n is the number of points.
         The argument 'points' can be a numpy array, torch.Tensor or torch.cuda.Tensor. If the type is numpy,
         transformed points are returned as np.float64, else the points are transformed using the GPU and 
         returned as torch.cuda.DoubleTensor.
+        The argument 'sensor' is a tuple of indices (cam,subcam) of the camera sensor to transform from.
         The argument 'ref_location' is the offset from the Seapath reference point to the reference.
         point to be used for the returned points in meters and vessel body coordinates (fwd,stb,dwn).
         If 'ref_location' is None, returned points are relative to Seapath reference point.
@@ -1263,8 +1372,8 @@ class DataLoader():
         """
         use_gpu = gpu and torch.is_tensor(points)
         points = self.transfer_gpu(points, use_gpu)
-        meta = self.get_metadata(t, self.TYPE_CAMERA, from_sensor_index, from_subsensor_index)
-        cfg_sensor = self.get_sensor_config(self.TYPE_CAMERA, from_sensor_index, from_subsensor_index)
+        meta = self.get_metadata(t, self.TYPE_CAMERA, sensor)
+        cfg_sensor = self.get_sensor_config(self.TYPE_CAMERA, sensor)
         
         # Get camera calibration
         camera_matrix = np.array(cfg_sensor['camera_matrix']).reshape((3,3))
@@ -1337,7 +1446,7 @@ class DataLoader():
         return p_transformed
     
     
-    def transform_points_from_radar(self, t, points, from_sensor_index, start_of_scan, ref_location=None, head_up=False):
+    def transform_points_from_radar(self, t, points, sensor, start_of_scan, ref_location=None, head_up=False):
         """
         Transform numpy array of radar image pixel coordinates (X,Y) to points in meters in (N,E,D) or heading frame. 
         Assumes that points are in the radar (R,P) plane.
@@ -1345,6 +1454,7 @@ class DataLoader():
         The argument 'points' can be a numpy array, torch.Tensor or torch.cuda.Tensor. If the type is numpy,
         transformed points are returned as np.float64, else the points are transformed using the GPU and 
         returned as torch.cuda.DoubleTensor.
+        The argument 'sensor' is the index of the radar sensor to transform from.
         If the argument 'start_of_scan' is True, the transformation will be valid at start of scan.
         If the argument 'start_of_scan' is False, the transformation will be valid at end of scan.
         The argument 'ref_location' is the offset from the Seapath reference point to the reference 
@@ -1356,11 +1466,11 @@ class DataLoader():
         """
         use_gpu = gpu and torch.is_tensor(points)
         points = self.transfer_gpu(points, use_gpu)
-        meta = self.get_metadata(t, self.TYPE_RADAR, from_sensor_index)
+        meta = self.get_metadata(t, self.TYPE_RADAR, sensor)
         range_filters = meta['radar_setup']['range_filters']
         dim_x = meta['image_dim'][0]    
         
-        cfg_sensor = self.get_sensor_config(self.TYPE_RADAR, from_sensor_index)
+        cfg_sensor = self.get_sensor_config(self.TYPE_RADAR, sensor)
          
         # Get rotation matrices
         R_ma = self.rot_matrix_from_euler(cfg_sensor['rotation'])
@@ -1405,13 +1515,14 @@ class DataLoader():
         return p_transformed
     
     
-    def transform_points_to_camera(self, t, points, to_sensor_index, to_subsensor_index, ref_location=None, head_up=False, invalidate_pixels=True):
+    def transform_points_to_camera(self, t, points, sensor, ref_location=None, head_up=False, invalidate_pixels=True):
         """
         Transform points in meters in (N,E,D) or heading frame to pixels coordinates (X,Y) in camera image.
         The argument 'points' should be an array of shape (n,3), where n is the number of points.
         The argument 'points' can be a numpy array, torch.Tensor or torch.cuda.Tensor. If the type is numpy,
         transformed points are returned as np.float64, else the points are transformed using the GPU and 
         returned as torch.cuda.DoubleTensor.
+        The argument 'sensor' is a tuple of indices (cam,subcam) of the camera sensor to transform to.
         The argument 'ref_location' is the offset from the Seapath reference point to the reference 
         point used for the input points in meters and vessel body coordinates (fwd,stb,dwn). If None, the offset is 
         assumed to be (0,0,0).
@@ -1421,10 +1532,10 @@ class DataLoader():
         """  
         use_gpu = gpu and torch.is_tensor(points)
         points = self.transfer_gpu(points, use_gpu)
-        meta = self.get_metadata(t, self.TYPE_CAMERA, to_sensor_index, to_subsensor_index)
+        meta = self.get_metadata(t, self.TYPE_CAMERA, sensor)
         dim_x, dim_y = meta['image_dim'][0], meta['image_dim'][1]
         
-        cfg_sensor = self.get_sensor_config(self.TYPE_CAMERA, to_sensor_index, to_subsensor_index)  
+        cfg_sensor = self.get_sensor_config(self.TYPE_CAMERA, sensor)  
             
         # Get rotation matrices
         R_ma = self.rot_matrix_from_euler(cfg_sensor['rotation']).transpose()
@@ -1483,7 +1594,7 @@ class DataLoader():
         return p_transformed
     
     
-    def transform_points_to_radar(self, t, points, to_sensor_index, start_of_scan, ref_location=None, head_up=False, invalidate_pixels=True):
+    def transform_points_to_radar(self, t, points, sensor, start_of_scan, ref_location=None, head_up=False, invalidate_pixels=True):
         """
         Transform points in meters in (N,E,D) or heading frame to pixels coordinates (X,Y) in radar image.
         Assumes that points are relative to Seapath reference point.
@@ -1491,6 +1602,7 @@ class DataLoader():
         The argument 'points' can be a numpy array, torch.Tensor or torch.cuda.Tensor. If the type is numpy,
         transformed points are returned as np.float64, else the points are transformed using the GPU and 
         returned as torch.cuda.DoubleTensor.
+        The argument 'sensor' is the index of the radar sensor to transform to.
         If the argument 'start_of_scan' is True, the transformation will be valid at start of scan.
         If the argument 'start_of_scan' is False, the transformation will be valid at end of scan.
         The argument 'ref_location' is the offset from the Seapath reference point to the reference 
@@ -1502,11 +1614,11 @@ class DataLoader():
         """
         use_gpu = gpu and torch.is_tensor(points)
         points = self.transfer_gpu(points, use_gpu)
-        meta = self.get_metadata(t, self.TYPE_RADAR, to_sensor_index)
+        meta = self.get_metadata(t, self.TYPE_RADAR, sensor)
         range_filters = meta['radar_setup']['range_filters']
         dim_x, dim_y = meta['image_dim'][0], meta['image_dim'][1]
         
-        cfg_sensor = self.get_sensor_config(self.TYPE_RADAR, to_sensor_index)  
+        cfg_sensor = self.get_sensor_config(self.TYPE_RADAR, sensor)  
                     
         # Get rotation matrices
         R_ma = self.rot_matrix_from_euler(cfg_sensor['rotation']).transpose()
@@ -1567,20 +1679,20 @@ class DataLoader():
         return p_transformed
         
     
-    def transform_image(self, t, from_sensor_type, to_sensor_type, from_sensor_index, to_sensor_index, image=[], from_subsensor_index=None, to_subsensor_index=None, 
+    def transform_image(self, t, from_sensor_type, to_sensor_type, from_sensor, to_sensor, image=[], 
                         use_gpu=True, return_gpu_tensor=False):
         """
         Transform image from one sensor frame to another. Assumes that all points are in the sea plane.
         The argument 't' is a datetime object with second resolution for the image transformation.
         The argument 'from_sensor_type' can be either TYPE_CAMERA or TYPE_RADAR.
         The argument 'to_sensor_type' can be either TYPE_CAMERA or TYPE_RADAR.
-        The argument 'from_sensor_index' is the index of the sensor to transform from.
-        The argument 'to_sensor_index' is the index of the sensor to transform to.
+        For TYPE_CAMERA, the argument 'from_sensor' is a tuple of indices (cam,subcam) of the camera sensor to transform from.
+        For TYPE_RADAR, the argument 'from_sensor' is the index of the radar sensor to transform from.
+        For TYPE_CAMERA, the argument 'to_sensor' is a tuple of indices (cam,subcam) of the camera sensor to transform to.
+        For TYPE_RADAR, the argument 'to_sensor' is the index of the radar sensor to transform to.
         The argument 'image' is the image to transform as an array of shape (height, width, n), where n is the number of color channels.
         The argument 'image' can be of type np.uint8, torch.ByteTensor or torch.cuda.ByteTensor.
         Height and width of 'image' has to match original sensor image. If 'image' is empty, the original sensor image is used as input.
-        The argument 'from_subsensor_index' is only required if 'from_sensor_type' is TYPE_CAMERA.
-        The argument 'to_subsensor_index' is only required if 'to_sensor_type' is TYPE_CAMERA.
         If the argument 'use_gpu' is True, the GPU is used for transformation, if pytorch and GPU is available.
         If the argument 'return_gpu_tensor' is True, the type of the returned image is torch.cuda.ByteTensor instead of np.uint8, 
         if pytorch and GPU is available.
@@ -1591,13 +1703,13 @@ class DataLoader():
         use_gpu = gpu and use_gpu
         image_return = []
         try:
-            meta_src = self.get_metadata(t, from_sensor_type, from_sensor_index, from_subsensor_index)
-            meta_dst = self.get_metadata(t, to_sensor_type, to_sensor_index, to_subsensor_index)
+            meta_src = self.get_metadata(t, from_sensor_type, from_sensor)
+            meta_dst = self.get_metadata(t, to_sensor_type, to_sensor)
             dim_x_src, dim_y_src = meta_src['image_dim'][0], meta_src['image_dim'][1]
             dim_x_dst, dim_y_dst = meta_dst['image_dim'][0], meta_dst['image_dim'][1]
             
             if image == []:
-                image = self.load_image(t, from_sensor_type, from_sensor_index, from_subsensor_index)
+                image = self.load_image(t, from_sensor_type, from_sensor)
                 if image == []:
                     return []
             else:
@@ -1609,7 +1721,7 @@ class DataLoader():
             x_dest, y_dest = np.meshgrid(np.arange(dim_x_dst), np.arange(dim_y_dst))
             p = np.stack([x_dest.reshape(-1), y_dest.reshape(-1), np.zeros(dim_x_dst * dim_y_dst)], axis=1)
             p = self.transfer_gpu(p, use_gpu)
-            px = self.transform_points(t, p, to_sensor_type, from_sensor_type, to_sensor_index, from_sensor_index, to_subsensor_index, from_subsensor_index)
+            px = self.transform_points(t, p, to_sensor_type, from_sensor_type, to_sensor, from_sensor)
             
             if use_gpu:
                 image_transformed = self.grid_sample_gpu(image, px - 0.5, (dim_x_dst, dim_y_dst))
@@ -1636,7 +1748,7 @@ class DataLoader():
         return image_return
     
     
-    def transform_image_from_sensor(self, t, sensor_type, sensor_index, origin, subsensor_index=None, dim=2000, scale=1, image=[],
+    def transform_image_from_sensor(self, t, sensor_type, sensor, origin=None, dim=2000, scale=1, image=[],
                                     use_gpu=True, return_gpu_tensor=False):
         """
         Transform a sensor image to an image in geographic frame with Seapath reference point as origin.
@@ -1644,9 +1756,10 @@ class DataLoader():
         Assumes that points in camera image are in the sea plane.
         The argument 't' is a datetime object with second resolution for the image to transform.
         The argument 'sensor_type' can be either TYPE_CAMERA or TYPE_RADAR.
-        The argument 'sensor_index' is the index of the sensor to transform.
-        The argument 'origin' is the origin of the tranformed image in degrees (lat,lon) as a tuple or numpy array.
-        The argument 'subsensor_index' is the sub index of the sensor to transform. Only used if 'sensor_type' is TYPE_CAMERA.
+        For TYPE_CAMERA, the argument 'sensor' is a tuple of indices (cam,subcam) of the camera sensor to transform from.
+        For TYPE_RADAR, the argument 'sensor' is the index of the radar sensor to transform from.
+        The argument 'origin' is the origin of the tranformed image in degrees (lat,lon) as a tuple or numpy array. If None, 
+        the position of Polarlys at image measurement time is used as origin in the image (Seapath reference point).
         The argument 'dim' is the height and width of the transformed image in pixels.
         The argument 'scale' is the number of meters pr. pixel in the transformed image.
         The argument 'image' is the image to transform and should be an array of shape (height, width, n), where n is the number of color channels.
@@ -1661,11 +1774,11 @@ class DataLoader():
         use_gpu = gpu and use_gpu
         image_return = []
         try:
-            meta = self.get_metadata(t, sensor_type, sensor_index, subsensor_index)
+            meta = self.get_metadata(t, sensor_type, sensor)
             dim_x, dim_y = meta['image_dim'][0], meta['image_dim'][1]
             
             if image == []:
-                image = self.load_image(t, sensor_type, sensor_index, subsensor_index)
+                image = self.load_image(t, sensor_type, sensor)
                 if image == []:
                     return []
             else:
@@ -1678,11 +1791,13 @@ class DataLoader():
             x_dest, y_dest = np.meshgrid(np.linspace(radius, -radius, dim), np.linspace(-radius, radius, dim))
             p = np.stack([x_dest.reshape(-1), y_dest.reshape(-1), np.zeros(dim*dim)], axis=1)
             p = self.transfer_gpu(p, use_gpu)
+            if origin is None:
+                origin = meta['own_vessel']['position'] if sensor_type==self.TYPE_CAMERA else meta['own_vessel_end']['position']
             origin = (origin[0], origin[1], 0)
             p = self.transform_points_from_ned(p, origin)
             if sensor_type==self.TYPE_RADAR:
                 p = (p, p.clone()) if use_gpu else (p, p.copy())
-            px = self.transform_points_to_sensor(t, p, sensor_type, sensor_index, subsensor_index)
+            px = self.transform_points_to_sensor(t, p, sensor_type, sensor)
 
             if use_gpu:
                 image_transformed = self.grid_sample_gpu(image, px, (dim, dim))
@@ -1710,18 +1825,19 @@ class DataLoader():
         return image_return
     
     
-    def transform_image_to_sensor(self, t, sensor_type, sensor_index, image, origin, subsensor_index=None, scale=1,
+    def transform_image_to_sensor(self, t, sensor_type, sensor, image, origin=None, scale=1,
                                   use_gpu=True, return_gpu_tensor=False):
         """
         Transform a geographic image with Seapath reference point as origin to a sensor image.
         The origin in the input image is assumed to be located in the center (dim/2,dim/2) of the transformed image.
         The argument 't' is a datetime object with second resolution for the transformed image.
         The argument 'sensor_type' can be either TYPE_CAMERA or TYPE_RADAR.
-        The argument 'sensor_index' is the index of the sensor to transform to.
+        For TYPE_CAMERA, the argument 'sensor' is a tuple of indices (cam,subcam) of the camera sensor to transform to.
+        For TYPE_RADAR, the argument 'sensor' is the index of the radar sensor to transform to.
         The argument 'image' is a numpy array of shape (dim,dim,n), where n is the number of color channels.
         The argument 'image' can be of type np.uint8, torch.ByteTensor or torch.cuda.ByteTensor.
-        The argument 'origin' is the origin of the input image in degrees (lat,lon) as a tuple or numpy array.
-        The argument 'subsensor_index' is the sub index of the sensor to transform to. Only used if 'sensor_type' is TYPE_CAMERA.
+        The argument 'origin' is the origin of the input image in degrees (lat,lon) as a tuple or numpy array. If None, 
+        the position of Polarlys at image measurement time is used as origin in the image (Seapath reference point).
         The argument 'scale' is the number of meters pr. pixel in the input image.
         If the argument 'use_gpu' is True, the GPU is used for transformation, if pytorch and GPU is available.
         If the argument 'return_gpu_tensor' is True, the type of the returned image is torch.cuda.ByteTensor instead of np.uint8, 
@@ -1733,7 +1849,7 @@ class DataLoader():
         use_gpu = gpu and use_gpu
         image_return = []
         try:
-            meta = self.get_metadata(t, sensor_type, sensor_index, subsensor_index) 
+            meta = self.get_metadata(t, sensor_type, sensor) 
             dim_x, dim_y = meta['image_dim'][0], meta['image_dim'][1]
             
             x_dest, y_dest = np.meshgrid(np.arange(dim_x), np.arange(dim_y))
@@ -1741,7 +1857,9 @@ class DataLoader():
             p = self.transfer_gpu(p, use_gpu)
             if sensor_type==self.TYPE_RADAR:
                 p = (p, p.clone()) if use_gpu else (p, p.copy())
-            p = self.transform_points_from_sensor(t, p, sensor_type, sensor_index, subsensor_index)
+            p = self.transform_points_from_sensor(t, p, sensor_type, sensor)
+            if origin is None:
+                origin = meta['own_vessel']['position'] if sensor_type==self.TYPE_CAMERA else meta['own_vessel_end']['position']
             origin = (origin[0], origin[1], 0)
             px = self.transform_points_to_ned(p, origin)
             
@@ -1780,18 +1898,18 @@ class DataLoader():
         return image_return
         
     
-    def transform_images_to_panorama(self, t, sensor_type=0, sensors=[(2,0),(2,1),(2,2),(0,0),(0,1),(0,2)], 
+    def transform_images_to_panorama(self, t, sensor_type=0, sensors=[(0,1),(0,0),(0,2),(1,1),(1,2),(3,0),(3,1)], 
                                     translation=(-10,0.1,-5.5), dim=(480,3840), vfov=(-15,10),
                                     use_gpu=True, return_gpu_tensor=False):
         """
         Transform sensor images to a panoramic image. All radar points are assumed to be in the sea plane. 
         Camera points below horizon is assumed to be in the sea plane. Camera points above the horizon is assumed to lie on a hemisphere.
         The argument 't' is a datetime object with second resolution for the image to transform.
-        The argument 'sensor_type' can be either TYPE_CAMERA or TYPE_RADAR.
-        For TYPE_CAMERA, the argument 'sensors' is a tuple (sensor_index, subsensor_index) or a list of tuples of sensors defining the images to be
-        transformed and the order which they are added.
-        For TYPE_RADAR, the argument 'sensors' is a sensor index or a list of sensor indexes defining the image to be transformed. 
-        If it's a list with more than one element, the first sensor with an image for this second is used.
+        The argument 'sensor_type' can be either TYPE_CAMERA or TYPE_RADAR.        
+        For TYPE_CAMERA, the argument 'sensors' is a tuple of indices (cam,subcam) or a list of tuples of camera sensors to 
+        transform in a prescriped order.
+        For TYPE_RADAR, the argument 'sensors' is a sensor index or a list of sensor indices of the radar sensors to transform. 
+        If 'sensors' is a list with more than one element, the first sensor with an image exists is used.
         The argument 'dim' is the height and width of the transformed image in pixels.
         The argument 'vfov' is the vertical field of view in degrees.
         If the argument 'use_gpu' is True, the GPU is used for transformation, if pytorch and GPU is available.
@@ -1875,17 +1993,14 @@ class DataLoader():
                 if not isinstance(sensors, list):
                     sensors = [sensors]
 
-                for sensor in sensors:
-                    sensor_index = sensor[0]
-                    subsensor_index = sensor[1]
-                    
-                    image = self.load_image(t, sensor_type, sensor_index, subsensor_index)
+                for sensor in sensors:    
+                    image = self.load_image(t, sensor_type, sensor)
                     if image == []:
                         return []
                     
                     image_aug[:,:,:3] = image
                     image_aug[:,:,3] = 1
-                    px = self.transform_points_to_sensor(t, p.clone() if use_gpu else p.copy(), sensor_type, sensor_index, subsensor_index)
+                    px = self.transform_points_to_sensor(t, p.clone() if use_gpu else p.copy(), sensor_type, sensor)
 
                     if use_gpu:
                         image_transformed = self.grid_sample_gpu(image_aug, px, dim)
@@ -1913,8 +2028,8 @@ class DataLoader():
         return image_return
     
     
-    def get_metadata(self, t, sensor_type, sensor_index, subsensor_index=None):
-        file_meta = self.get_filename_sec(t, self.get_sensor_folder(sensor_type, sensor_index, subsensor_index), 'json')
+    def get_metadata(self, t, sensor_type, sensor):
+        file_meta = self.get_filename_sec(t, self.get_sensor_folder(sensor_type, sensor), 'json')
         if not file_meta or not os.path.isfile(file_meta):
             return {}
         
@@ -2081,7 +2196,7 @@ class DataLoader():
         return m
         
     
-    def prepare_ais_targets(self, targets, cfg_ais):
+    def prepare_ais_targets(self, targets, cfg_ais=None):
         """
         Position and heading is extrapolated according to velocity and age.
         Targets with age greater than limit are removed.
@@ -2089,19 +2204,20 @@ class DataLoader():
         targets_prep = {}
         for mmsi,target in targets.items():
        
-            # Check if moored, anchored or aground
-            moving = True
-            if 'nav_status' in target.keys():
-                if target['nav_status'] == 1 or target['nav_status'] == 5 or target['nav_status'] == 6:
-                    moving = False
-                    
-            # Check if age is within limits
-            if moving:
-                if abs(target['age']) > cfg_ais['timeout_moving']:
-                    continue
-            else:
-                if abs(target['age']) > cfg_ais['timeout_static']:
-                    continue
+            if cfg_ais is not None:
+                # Check if moored, anchored or aground
+                moving = True
+                if 'nav_status' in target.keys():
+                    if target['nav_status'] == 1 or target['nav_status'] == 5 or target['nav_status'] == 6:
+                        moving = False
+                        
+                # Check if age is within limits
+                if moving:
+                    if abs(target['age']) > cfg_ais['timeout_moving']:
+                        continue
+                else:
+                    if abs(target['age']) > cfg_ais['timeout_static']:
+                        continue
             
             # Convert decimal degrees to radians 
             lat, lon = map(math.radians, [target['position'][0], target['position'][1]])   
