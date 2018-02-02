@@ -449,7 +449,10 @@ class RadarDatasetFolder(data.Dataset):
                     for col in range(1, land.shape[1]):
                         np.bitwise_or(land[:, col], hidden_by_land_mask[:, col - 1], out=hidden_by_land_mask[:, col])
 
-                    label[(hidden_by_land_mask == 1) & (land == 0)] = self.LABELS["hidden"]
+                    if self.remove_hidden_targets:
+                        label[(hidden_by_land_mask == 1) & (land == 0)] = self.LABELS["hidden"]
+                    else:
+                        label[(hidden_by_land_mask == 1) & (land == 0) & (ais == 0)] = self.LABELS["hidden"]
 
             # unlabel data blocked by mast for Radar0
             if sensor_index == 0:
