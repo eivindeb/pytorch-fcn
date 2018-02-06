@@ -15,6 +15,8 @@ import re
 import random
 import tqdm
 from configparser import ConfigParser
+import shutil
+import subprocess
 
 
 """
@@ -108,6 +110,26 @@ class RadarDatasetFolder(data.Dataset):
         self.min_data_interval = config["Parameters"].getint("MinDataIntervalSeconds", 0)
         self.skip_processed_files = config["Parameters"].getboolean("SkipProcessedFiles", True)
         self.coordinate_system = config["Parameters"].get("CoordinateSystem", "Polar")
+        self.max_disk_usage = config["Parameters"].get("MaxDiskUsage", None)
+
+        try:
+            self.max_disk_usage = int(self.max_disk_usage)
+        except:
+            print("Config parameter MaxDiskUsage must be an integer of bytes allowed.")
+            exit(0)
+
+        if self.cache_labels and self.max_disk_usage is None:
+            print("Warning: No maximum disk usage specified, using all available space.")
+            exit(0)
+
+        disk_usage = shutil.disk_usage(self.label_folder)
+        if self.max_disk_usage > disk_usage.free:
+            print("Warning: maximum allowed disk usage is larger than the available disk space.")
+
+        self.current_disk_usage = subprocess.check_output(["du", "-sx", "/data/polarlys/labels"]).split()[0].decode("utf-8")
+
+        self.max_disk_capacity_reached = {"status": disk_usage.free < 1e6, "timestamp": datetime.datetime.now()}
+
         self.data_ranges = (np.s_[:int(4096/3), 0:2000], np.s_[int(4096/3):int(2*4096/3), 0:2000], np.s_[int(2*4096/3):, 0:2000])
 
         if "land" in self.class_names and self.filter_land:
