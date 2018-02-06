@@ -28,6 +28,10 @@ TODO:
 """
 
 
+class MaxDiskUsageError(Exception):
+    pass
+
+
 class DataRange:
     def __init__(self, data_range):
         self.data_range = self.fill_None(data_range)
@@ -290,7 +294,14 @@ class RadarDatasetFolder(data.Dataset):
                         if file in files_without_targets:
                             continue
 
-                        lbl = self.get_label(file, file.replace(self.data_folder, self.label_folder).replace(".bmp", "_label.npy"))
+                        try:
+                            lbl = self.get_label(file, file.replace(self.data_folder, self.label_folder).replace(".bmp", "_label.npy"), throw_exception=True)
+                        except MaxDiskUsageError:
+                            print("Maximum allowed disk usage reached, terminating file search")
+                            break
+                        except OSError:
+                            print("Maximum disk capacity reached, terminating file search")
+                            break
 
                         ranges_with_targets = []
                         ranges_without_targets = []
@@ -401,6 +412,24 @@ class RadarDatasetFolder(data.Dataset):
 
         return class_shares
 
+    def save_numpy_file(self, file_path, file, throw_exception=False):
+        if self.max_disk_capacity_reached and datetime.datetime.now() - self.max_disk_capacity_reached["timestamp"] < datetime.timedelta(hours=1):
+            if throw_exception:
+                raise OSError
+        else:
+            try:
+                if self.current_disk_usage + file.nbytes > self.max_disk_usage:
+                    if throw_exception:
+                        raise MaxDiskUsageError
+                else:
+                    self.current_disk_usage += file.nbytes
+                    np.save(file_path, file)
+            except OSError:  # numpy cannot allocate enough free space
+                if throw_exception:
+                    raise OSError
+                self.max_disk_capacity_reached["status"] = True
+                self.max_disk_capacity_reached["timestamp"] = datetime.datetime.now()
+
     def collect_and_cache_labels(self):
         files = self.files[self.split]
 
@@ -413,7 +442,7 @@ class RadarDatasetFolder(data.Dataset):
             print("Caching labels for file {} of {}".format(i, len(files)))
             ais, land = self.get_label(f[0])
 
-    def get_label(self, data_path, label_path):
+    def get_label(self, data_path, label_path, throw_exception=False):
         cached_label_missing = False
         if self.cache_labels:
             try:
@@ -461,7 +490,7 @@ class RadarDatasetFolder(data.Dataset):
             if cached_label_missing:
                 if not osp.exists(osp.dirname(label_path)):
                     makedirs(osp.dirname(label_path))
-                np.save(label_path, label.astype(np.int8))
+                self.save_numpy_file(label_path, label.astype(np.int8), throw_exception=throw_exception)
 
         if self.filter_land:
             label[(label == self.LABELS["land"]) | (label == self.LABELS["hidden"])] = self.LABELS["unlabeled"]
@@ -514,7 +543,7 @@ class RadarDatasetFolder(data.Dataset):
             if sensor_index == 0:
                 label[2000:2080, :] = self.LABELS["unlabeled"]
 
-            np.save(label_path, label.astype(np.int8))
+            self.save_numpy_file(label_path, label.astype(np.int8))
             processed_labels.append(label_path)
 
 
