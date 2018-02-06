@@ -144,7 +144,7 @@ class RadarDatasetFolder(data.Dataset):
         except IOError as e:
             print(e)
             print("No index file found for dataset, generating index for dataset instead")
-            self.generate_dataset_file()
+            self.update_dataset_file()
 
     def __len__(self):
         return len(self.files[self.split])
@@ -194,50 +194,52 @@ class RadarDatasetFolder(data.Dataset):
         with open(index, "r+") as file:
             lines = file.readlines()
             file_edited = False
-            lbl = None
             for line_num, line in tqdm.tqdm(enumerate(lines), total=len(lines), desc="Reading dataset index file"):
                 line_edited = False
                 line = line.strip()
-                filename, ranges = line.split(";")
-                ranges_with_targets, ranges_without_targets = ranges.split("/")
 
-                # img = self.data_loader.load_image(osp.join(self.data_folder, filename))
+                try:
+                    filename, target_locations_string = line.split(";")
+                except:
+                    print("Invalid format for line number {} in index file. Should be:".format(line_num))
+                    print("path/to/file;[target0_0,target0_1]/[target_1_0,target_1_1]/...")
+                    print("but is: {}".format(line))
+                    exit(0)
 
-                # if img is None:  # temporary
-                #    line_edited = True
-                #    line = "removed"
-                if False:
-                    pass
+                if target_locations_string == "":
+                    target_locations = None
+                elif target_locations_string == "[]":
+                    target_locations = []
                 else:
-                    for i, data_range in enumerate(self.data_ranges):
-                        if not self.remove_files_without_targets or str(data_range) in ranges_with_targets:
-                            self.files[self.split].append({"data": [osp.join(self.data_folder, filename), i],
-                                                      "label": osp.join(self.label_folder,
-                                                                        filename.replace(".bmp", "_label.npy"))})
-                        elif str(data_range) in ranges_without_targets:
-                            continue
-                        else:  # new data range, check for targets in range and write result to index file
-                            line_edited = True
-                            edit_pos = line.rfind("/")
+                    target_locations = []
+                    for target in target_locations_string.split("/"):
+                        target = target.strip("[]").split(",")
+                        target_locations.append([int(target[0]), int(target[1])])
 
-                            if lbl is None:
-                                lbl = self.get_label(osp.join(self.data_folder, filename),
-                                                     osp.join(self.label_folder,
-                                                              filename.replace(".bmp", "_label.npy")))
+                for i, data_range in enumerate(self.data_ranges):
+                    if target_locations is None:  # ais target data missing, TODO: actually have to check if targets are hidden...
+                        basename = osp.splitext(filename)[0]
+                        t = self.data_loader.get_time_from_basename(basename)
+                        sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
+                        ais_targets = self.data_loader.load_ais_targets_sensor(t, sensor, sensor_index)
+                        target_locations = []
 
-                            if np.any(lbl[data_range] == self.LABELS["ais"]):
-                                self.files[self.split].append({"data": [osp.join(self.data_folder, filename), i],
-                                                          "label": osp.join(self.label_folder,
-                                                                            filename.replace(".bmp", "_label.npy"))})
-                                line = line[:edit_pos] + str(data_range) + line[edit_pos:]
-                            else:
-                                line = line[:edit_pos + 1] + str(data_range) + line[edit_pos + 1:]
+                        line_edited = True
+                        edit_pos = line.rfind(";")
 
+                        if len(ais_targets) > 0:
+                            target_locations = [np.round(target, decimals=0).astype(np.int64).tolist() for target in target_locations]
+                            line = line[:edit_pos + 1] + "/".join([str(t) for t in target_locations])
+                        else:
+                            line = line[:edit_pos + 1] + "[]"
+
+                    if not self.remove_files_without_targets or any(self.point_in_range(target, data_range, margin=30) for target in target_locations):
+                        self.files[self.split].append({"data": [osp.join(self.data_folder, filename), i],
+                                                  "label": osp.join(self.label_folder,
+                                                                    filename.replace(".bmp", "_label.npy"))})
                 if line_edited:
                     file_edited = True
                     lines[line_num] = line + "\n"
-
-                lbl = None
 
             if file_edited:
                 file.seek(0)
@@ -264,7 +266,7 @@ class RadarDatasetFolder(data.Dataset):
 
             self.files[self.split] = new_files
 
-    def generate_dataset_file(self):
+    def update_dataset_file(self):
         def collect_data_files_recursively(parent, filenames=None):
             if filenames is None:
                 filenames = []
@@ -307,7 +309,12 @@ class RadarDatasetFolder(data.Dataset):
                         filter_stats["Time"] += 1
                         continue
 
-                    img = self.data_loader.load_image(file)
+                    # load image
+                    basename = osp.splitext(file)[0]
+                    t = self.data_loader.get_time_from_basename(basename)
+                    sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
+
+                    img = self.data_loader.load_image(t, sensor, sensor_index)
 
                     if img is None or type(img) == "list":  # temporary
                         continue
@@ -335,7 +342,11 @@ class RadarDatasetFolder(data.Dataset):
                                 ranges_without_targets.append(j)
 
                         if len(ranges_with_targets) > 0:
-                            filtered_files.append([file, ranges_with_targets, ranges_without_targets])
+                            ais_targets = self.data_loader.load_ais_targets_sensor(t, sensor, sensor_index)
+                            target_locations = [np.round(target[0], decimals=0).astype(np.int64).tolist() for target in ais_targets]
+
+                            filtered_files.append([file, "/".join([str(t) for t in target_locations])])
+
                             last_time[file_radar_type] = file_time
                             processed_files_index.write("{};true\n".format(file))
                         else:
@@ -364,24 +375,17 @@ class RadarDatasetFolder(data.Dataset):
         with open(osp.join(self.dataset_folder, "train.txt"), "w+") as train:
             with open(osp.join(self.dataset_folder, "valid.txt"), "w+") as valid:
                 for i, file in enumerate(filtered_files):
-                    checked_ranges = ""
-                    for j in file[1]:
-                        checked_ranges += str(self.data_ranges[j])
-                    checked_ranges += "/"
-                    for j in file[2]:
-                        checked_ranges += str(self.data_ranges[j])
-
                     file_rel_path = osp.relpath(file[0], start=self.data_folder)
                     label_path = osp.join(self.label_folder, file_rel_path).replace(".bmp", "_label.npy")
 
                     if i <= len(filtered_files)*0.8:
-                        train.write("{};{}\n".format(file_rel_path, checked_ranges))
+                        train.write("{};{}\n".format(file_rel_path, file[1]))
                         if self.split == "train":
                             for j in file[1]:
                                 self.files["train"].append({"data": [file[0], j],
                                                            "label": label_path})
                     else:
-                        valid.write("{};{}\n".format(file_rel_path, checked_ranges))
+                        valid.write("{};{}\n".format(file_rel_path, file[1]))
                         if self.split == "valid":
                             for j in file[1]:
                                 self.files["valid"].append({"data": [file[0], j],
