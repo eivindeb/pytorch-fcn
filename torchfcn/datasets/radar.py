@@ -515,7 +515,7 @@ class RadarDatasetFolder(data.Dataset):
         cached_label_missing = False
         if self.cache_labels:
             try:
-                label = np.load(label_path).astype(np.int32)
+                label = np.load(label_path).astype(np.int8)
             except IOError as e:
                 cached_label_missing = True
 
@@ -528,17 +528,14 @@ class RadarDatasetFolder(data.Dataset):
             if len(ais) == 0:
                 img = self.data_loader.load_image(data_path)
                 if len(img) == 0 or img is None:
-                    label = np.zeros((4096, 3400), dtype=np.int32)
+                    label = np.zeros((4096, self.max_range), dtype=np.int8)
                 else:
-                    label = np.zeros(img.shape, dtype=np.int32)
+                    label = np.zeros((img.shape[0], img.shape[1] if img.shape[1] < self.max_range else self.max_range), dtype=np.int8)
             else:
-                label = ais.astype(np.int8)
+                label = ais.astype(np.int8)[:, :self.max_range]
 
             if "land" in self.class_names or self.filter_land:
-                try:
-                    land = np.load(label_path.replace(".npy", "_land.npy"))
-                except:
-                    land = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index)
+                land = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, binary=True, only_first_range_step=True if self.max_range <= 2000 else False)[:, :self.max_range]
                 label[land == 1] = self.LABELS["land"]
 
                 if self.filter_land and len(land) != 0:
@@ -557,8 +554,6 @@ class RadarDatasetFolder(data.Dataset):
                 label[2000:2080, :] = self.LABELS["unlabeled"]
 
             if cached_label_missing:
-                if not osp.exists(osp.dirname(label_path)):
-                    makedirs(osp.dirname(label_path))
                 self.save_numpy_file(label_path, label.astype(np.int8), throw_exception=throw_exception)
 
         if self.filter_land:
@@ -614,7 +609,6 @@ class RadarDatasetFolder(data.Dataset):
 
             self.save_numpy_file(label_path, label.astype(np.int8))
             processed_labels.append(label_path)
-
 
     def generate_list_of_required_files(self):
         index_file = osp.join(self.dataset_folder, self.split) + ".txt"
