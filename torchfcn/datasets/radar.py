@@ -137,7 +137,7 @@ class RadarDatasetFolder(data.Dataset):
             print("Exiting: Land is both declared as a target and filtered out, please adjust configuration.")
             exit(0)
 
-        self.data_loader = DataLoader(self.data_folder, sensor_config=osp.join(here, "dataloader.json"))
+        self.data_loader = DataLoader(self.data_folder, sensor_config=dataloader_config)
 
         # TODO: fix path connections between location of dataset index,and data files and labels
         try:
