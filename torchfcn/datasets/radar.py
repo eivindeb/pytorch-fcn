@@ -690,23 +690,24 @@ if __name__ == "__main__":
     from polarlys.dataloader import DataLoader
 
     #np.s_[:int(4096/3), 0:2000], np.s_[int(4096/3):int(2*4096/3), 0:2000], np.s_[int(2*4096/3):, 0:2000]
-    valid = RadarDatasetFolder(root="/home/eivind/Documents/polarlys_datasets", cfg="/home/eivind/Documents/polarlys_datasets/polarlys_cfg.txt", split="train", dataset_name="2018")
-    valid.update_cached_labels("ais")
+    dataset = RadarDatasetFolder(root="/home/eivind/Documents/polarlys_datasets", cfg="/home/eivind/Documents/polarlys_datasets/polarlys_cfg.txt", split="train", dataset_name="2018")
+    #dataset.update_cached_labels("ais")
+    dataset.update_dataset_file(from_time=datetime.datetime(year=2017, month=11, day=16, hour=8))
 
     exit(0)
     print("mean: ")
-    print(valid.get_mean())
-    mean_cols = valid.get_mean_of_columns()
+    print(dataset.get_mean())
+    mean_cols = dataset.get_mean_of_columns()
     np.savetxt("column_sum_new.txt", mean_cols)
 
     print("class shares: ")
-    class_shares = valid.get_class_shares()
+    class_shares = dataset.get_class_shares()
     print(class_shares)
     print("hei")
-    #valid.generate_list_of_required_files()
+    #dataset.generate_list_of_required_files()
     #print("hei")
-    #for i in tqdm.tqdm(range(len(valid.files[valid.split])), total=len(valid.files[valid.split])):
-    #    img, data = valid[i]
+    #for i in tqdm.tqdm(range(len(dataset.files[dataset.split])), total=len(dataset.files[dataset.split])):
+    #    img, data = dataset[i]
 
     #print("Training set mean: {}".format(train.get_mean()))
     #print("Training set class shares: {}".format(train.get_class_shares()))
