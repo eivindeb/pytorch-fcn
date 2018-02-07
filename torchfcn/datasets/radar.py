@@ -144,13 +144,16 @@ class RadarDatasetFolder(data.Dataset):
 
         self.data_loader = DataLoader(self.data_folder, sensor_config=dataloader_config)
 
-        # TODO: fix path connections between location of dataset index,and data files and labels
         try:
             self.load_files_from_index(osp.join(self.dataset_folder, self.split) + ".txt")
         except IOError as e:
             print(e)
             print("No index file found for dataset, generating index for dataset instead")
             self.update_dataset_file()
+            self.redistribute_set_splits(self.split)
+            self.load_files_from_index(osp.join(self.dataset_folder, self.split) + ".txt")
+
+            # TODO: calculate mean and other data and save in dataset folder
 
     def __len__(self):
         return len(self.files[self.split])
