@@ -92,6 +92,11 @@ class RadarDatasetFolder(data.Dataset):
         self.cache_labels = config["Parameters"].getboolean("CacheLabels", False)
         self.data_folder = config["Paths"].get("DataFolder")
         self.label_folder = config["Paths"].get("LabelFolder")
+        dataloader_config = config["Paths"].get("DataloaderCFG")
+
+        if dataloader_config is None:
+            print("Configuration file missing required field: DataloaderCFG")
+            exit(0)
 
         if self.data_folder is None:
             print("Configuration file missing required field: DataFolder")
