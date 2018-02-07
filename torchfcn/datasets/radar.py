@@ -687,7 +687,7 @@ class RadarDatasetFolder(data.Dataset):
         return ais_targets
 
 if __name__ == "__main__":
-    from dataloader import DataLoader
+    from polarlys.dataloader import DataLoader
 
     #np.s_[:int(4096/3), 0:2000], np.s_[int(4096/3):int(2*4096/3), 0:2000], np.s_[int(2*4096/3):, 0:2000]
     valid = RadarDatasetFolder(root="/home/eivind/Documents/polarlys_datasets", cfg="/home/eivind/Documents/polarlys_datasets/polarlys_cfg.txt", split="train", dataset_name="2018")
@@ -713,6 +713,6 @@ if __name__ == "__main__":
     #test = np.load("/media/stx/LaCie1/export/2017-10-25/2017-10-25-17/Radar0/2017-10-25-17_00_02_513_label_land.npy")
     #print(test)
 else:
-    from .dataloader import DataLoader
+    from polarlys.dataloader import DataLoader
 
 
