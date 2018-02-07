@@ -115,23 +115,19 @@ class RadarDatasetFolder(data.Dataset):
         self.min_data_interval = config["Parameters"].getint("MinDataIntervalSeconds", 0)
         self.skip_processed_files = config["Parameters"].getboolean("SkipProcessedFiles", True)
         self.coordinate_system = config["Parameters"].get("CoordinateSystem", "Polar")
-        self.max_disk_usage = config["Parameters"].get("MaxDiskUsage", None)
-
-        try:
-            self.max_disk_usage = int(self.max_disk_usage)
-        except:
-            print("Config parameter MaxDiskUsage must be an integer of bytes allowed.")
-            exit(0)
+        self.max_range = config["Parameters"].getint("MaxRange", 2000)
+        self.max_disk_usage = config["Parameters"].getint("MaximumDiskUsage", None)
 
         if self.cache_labels and self.max_disk_usage is None:
             print("Warning: No maximum disk usage specified, using all available space.")
             exit(0)
 
-        disk_usage = shutil.disk_usage(self.label_folder)
-        if self.max_disk_usage > disk_usage.free:
-            print("Warning: maximum allowed disk usage is larger than the available disk space.")
+        # reports in KB
+        self.current_disk_usage = int(subprocess.check_output(["du", "-sx", "/data/polarlys/labels"]).split()[0].decode("utf-8")) * 1e3
 
-        self.current_disk_usage = subprocess.check_output(["du", "-sx", "/data/polarlys/labels"]).split()[0].decode("utf-8")
+        disk_usage = shutil.disk_usage(self.label_folder)
+        if self.max_disk_usage - self.current_disk_usage > disk_usage.free:
+            print("Warning: maximum allowed disk usage is larger than the available disk space.")
 
         self.max_disk_capacity_reached = {"status": disk_usage.free < 1e6, "timestamp": datetime.datetime.now()}
 
@@ -444,7 +440,7 @@ class RadarDatasetFolder(data.Dataset):
         return class_shares
 
     def save_numpy_file(self, file_path, file, throw_exception=False):
-        if self.max_disk_capacity_reached and datetime.datetime.now() - self.max_disk_capacity_reached["timestamp"] < datetime.timedelta(hours=1):
+        if self.max_disk_capacity_reached["status"] and datetime.datetime.now() - self.max_disk_capacity_reached["timestamp"] < datetime.timedelta(hours=1):
             if throw_exception:
                 raise OSError
         else:
@@ -453,6 +449,9 @@ class RadarDatasetFolder(data.Dataset):
                     if throw_exception:
                         raise MaxDiskUsageError
                 else:
+                    if not osp.exists(osp.dirname(file_path)):
+                        makedirs(osp.dirname(file_path))
+
                     self.current_disk_usage += file.nbytes
                     np.save(file_path, file)
             except OSError:  # numpy cannot allocate enough free space
