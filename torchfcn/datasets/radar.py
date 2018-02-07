@@ -117,6 +117,11 @@ class RadarDatasetFolder(data.Dataset):
         self.coordinate_system = config["Parameters"].get("CoordinateSystem", "Polar")
         self.max_range = config["Parameters"].getint("MaxRange", 2000)
         self.max_disk_usage = config["Parameters"].getint("MaximumDiskUsage", None)
+        self.set_splits = [float(s) for s in config["Parameters"].get("SetSplits", "0.95,0.025,0.025").split(",")]
+
+        if sum(self.set_splits) != 1:
+            print("Desired set split does not add up to 1, instead {}".format(sum(self.set_splits)))
+            exit(0)
 
         if self.cache_labels and self.max_disk_usage is None:
             print("Warning: No maximum disk usage specified, using all available space.")
@@ -393,43 +398,35 @@ class RadarDatasetFolder(data.Dataset):
 
         #print("{} data files left after filtering (time: {}, no targets: {})".format(len(filtered_files), filter_stats["Time"], filter_stats["No targets"]))
 
-                            label_path = file.replace(self.data_folder, self.label_folder).replace(".bmp", "_label.npy")
-                            remove(label_path)
+    def redistribute_set_splits(self, new_split):
+        assert(sum(new_split) == 1)
 
-                            filter_stats["No targets"] += 1
-                    else:
-                        filtered_files.append([file, self.data_ranges])
-                except Exception as e:  # temporary
-                    print("An error occurred in processing of image {}, skipping".format(file))
-                    print(e)
-                    processed_files_index.write("{};false\n".format(file))
-                    files_without_targets.append(file)
-                    continue
+        files = []
+        splits = ["train", "valid", "test"]
 
-        print("{} data files left after filtering (time: {}, no targets: {})".format(len(filtered_files), filter_stats["Time"], filter_stats["No targets"]))
+        for split in splits:
+            split_index = osp.join(self.dataset_folder, split + ".txt")
+            if osp.exists(split_index):
+                with open(split_index, 'r') as index:
+                    for line in index.readlines():
+                        files.append(line)
 
-        print("Writing to index file")
+        random.shuffle(files)
 
-        random.shuffle(filtered_files)
+        # TODO: maybe sort before writing to index file?
 
-        with open(osp.join(self.dataset_folder, "train.txt"), "w+") as train:
-            with open(osp.join(self.dataset_folder, "valid.txt"), "w+") as valid:
-                for i, file in enumerate(filtered_files):
-                    file_rel_path = osp.relpath(file[0], start=self.data_folder)
-                    label_path = osp.join(self.label_folder, file_rel_path).replace(".bmp", "_label.npy")
-
-                    if i <= len(filtered_files)*0.8:
-                        train.write("{};{}\n".format(file_rel_path, file[1]))
-                        if self.split == "train":
-                            for j in file[1]:
-                                self.files["train"].append({"data": [file[0], j],
-                                                           "label": label_path})
-                    else:
-                        valid.write("{};{}\n".format(file_rel_path, file[1]))
-                        if self.split == "valid":
-                            for j in file[1]:
-                                self.files["valid"].append({"data": [file[0], j],
-                                                           "label": label_path})
+        index_files = [osp.join(self.dataset_folder, split + ".txt") for split in splits]
+        with open(index_files[0], 'r+') as train_index, open(index_files[1], 'r+') as valid_index, open(index_files[2], 'r+') as test_index:
+            train_index.truncate()
+            valid_index.truncate()
+            test_index.truncate()
+            for i, file in enumerate(files):
+                if i <= new_split[0] * len(files):
+                    train_index.write(file)
+                elif i <= (new_split[1] + new_split[0]) * len(files):
+                    valid_index.write(file)
+                else:
+                    test_index.write(file)
 
     def get_mean(self):
         mean_sum = 0
