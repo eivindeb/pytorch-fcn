@@ -207,37 +207,37 @@ class RadarDatasetFolder(data.Dataset):
                     print("but is: {}".format(line))
                     exit(0)
 
-                if target_locations_string == "":
-                    target_locations = None
-                elif target_locations_string == "[]":
-                    target_locations = []
+                # load image
+                #basename = osp.splitext(filename)[0]
+                #t = self.data_loader.get_time_from_basename(basename)
+                #sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
+
+                #img = self.data_loader.load_image(t, sensor, sensor_index)
+
+                if False and type(img) == list:
+                    line = "removed"
+                    line_edited = True
                 else:
-                    target_locations = []
-                    for target in target_locations_string.split("/"):
-                        target = target.strip("[]").split(",")
-                        target_locations.append([int(target[0]), int(target[1])])
+                    target_locations = self.ais_targets_string_to_list(target_locations_string)
 
-                for i, data_range in enumerate(self.data_ranges):
-                    if target_locations is None:  # ais target data missing, TODO: actually have to check if targets are hidden...
-                        basename = osp.splitext(filename)[0]
-                        t = self.data_loader.get_time_from_basename(basename)
-                        sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
-                        ais_targets = self.data_loader.load_ais_targets_sensor(t, sensor, sensor_index)
-                        target_locations = []
+                    for i, data_range in enumerate(self.data_ranges):
+                        if target_locations is None:  # ais target data missing, TODO: actually have to check if targets are hidden...
+                            basename = osp.splitext(filename)[0]
+                            t = self.data_loader.get_time_from_basename(basename)
+                            sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
+                            ais_targets = self.data_loader.load_ais_targets_sensor(t, sensor, sensor_index)
+                            ais_targets_string = self.ais_targets_to_string(ais_targets)
+                            target_locations = self.ais_targets_string_to_list(ais_targets_string)
 
-                        line_edited = True
-                        edit_pos = line.rfind(";")
+                            line_edited = True
+                            edit_pos = line.rfind(";")
 
-                        if len(ais_targets) > 0:
-                            target_locations = [np.round(target, decimals=0).astype(np.int64).tolist() for target in target_locations]
-                            line = line[:edit_pos + 1] + "/".join([str(t) for t in target_locations])
-                        else:
-                            line = line[:edit_pos + 1] + "[]"
+                            line = line[:edit_pos + 1] + ais_targets_string
 
-                    if not self.remove_files_without_targets or any(self.point_in_range(target, data_range, margin=30) for target in target_locations):
-                        self.files[self.split].append({"data": [osp.join(self.data_folder, filename), i],
-                                                  "label": osp.join(self.label_folder,
-                                                                    filename.replace(".bmp", "_label.npy"))})
+                        if not self.remove_files_without_targets or any(self.point_in_range(target, data_range, margin=30) for target in target_locations):
+                            self.files[self.split].append({"data": [osp.join(self.data_folder, filename), i],
+                                                      "label": osp.join(self.label_folder,
+                                                                        filename.replace(".bmp", "_label.npy"))})
                 if line_edited:
                     file_edited = True
                     lines[line_num] = line + "\n"
