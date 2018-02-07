@@ -267,28 +267,54 @@ class RadarDatasetFolder(data.Dataset):
 
             self.files[self.split] = new_files
 
-    def update_dataset_file(self):
+    def update_dataset_file(self, from_time=None, to_time=None):
         def collect_data_files_recursively(parent, filenames=None):
             if filenames is None:
                 filenames = []
+                to_search = tqdm.tqdm(listdir(parent), desc="Searching for data files", total=len(listdir(parent)), leave=False)
+            else:
+                to_search = listdir(parent)
 
-            for child in listdir(parent):
-                if re.match("^[0-9-]*$", child) or child in self.radar_types:
+            # TODO: fix bug where from time with hours makes it so that it wont enter the outer date folder wihtout hours
+            for child in to_search:
+                if re.match("^[0-9-]*$", child):
+                    if from_time is None and to_time is None:
+                        filenames = collect_data_files_recursively(osp.join(parent, child), filenames)
+                    else:
+                        child_datetime = datetime.datetime.strptime(child, "%Y-%m-%d{}".format("-%H" if len(child) > 10 else ""))
+                        if from_time is not None and to_time is not None and from_time <= child_datetime <= to_time:
+                            filenames = collect_data_files_recursively(osp.join(parent, child), filenames)
+                        elif from_time is None and child_datetime <= to_time or to_time is None and child_datetime >= from_time:
+                            filenames = collect_data_files_recursively(osp.join(parent, child), filenames)
+                elif child in self.radar_types:
                     filenames = collect_data_files_recursively(osp.join(parent, child), filenames)
                 elif child.endswith(".bmp"):
                     filenames.append(osp.join(parent, child))
 
             return filenames
 
+        splits = ["train", "valid", "test"]
+        splits.remove(self.split)
+
+        dataset_files = [file["data"][0] for file in self.files[self.split]]
+
+        for split in splits:
+            split_index = osp.join(self.dataset_folder, split + ".txt")
+            if osp.exists(split_index):
+                with open(split_index, 'r') as index:
+                    for line in index.readlines():
+                        dataset_files.append(line.strip().split(";")[0])
+
+        dataset_files = set(dataset_files)
+
         files = collect_data_files_recursively(self.data_folder)
         print("Found {} data files".format(len(files)))
 
-        filtered_files = []
-        filter_stats = {"Time": 0, "No targets": 0}
+        files = [file for file in files if file not in dataset_files]
 
         sorted_files = sorted(files, key=lambda x: datetime.datetime.strptime(x.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S"))
-        sorted_files = sorted_files[302000:]
 
+        filter_stats = {"Time": 0, "No targets": 0, "Missing data": 0}
 
         with open(osp.join(self.root, "processed_files.txt"), "r+") as processed_files_index:
             lines = processed_files_index.readlines()
@@ -298,61 +324,74 @@ class RadarDatasetFolder(data.Dataset):
             #last_processed = lines[-1].rstrip("\n").split(";")[0].replace(".bmp", "")
             #last_processed_time = datetime.datetime.strptime(last_processed, "%Y-%m-%d-%H_%M_%S")
             last_time = {radar_type: datetime.datetime(year=2000, month=1, day=1) for radar_type in self.radar_types}
-            for file in tqdm.tqdm(sorted_files, total=len(sorted_files), desc="Filtering data files", leave=False):
-                try:
-                    if self.skip_processed_files and (self.remove_files_without_targets and file in files_without_targets or file in files_with_targets):
-                        continue
-
-                    file_time = datetime.datetime.strptime(file.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S")
-                    file_radar_type = file.split("/")[-2]
-
-                    if file_time - last_time[file_radar_type] < datetime.timedelta(seconds=self.min_data_interval):
-                        filter_stats["Time"] += 1
-                        continue
-
-                    # load image
-                    basename = osp.splitext(file)[0]
-                    t = self.data_loader.get_time_from_basename(basename)
-                    sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
-
-                    img = self.data_loader.load_image(t, sensor, sensor_index)
-
-                    if img is None or type(img) == "list":  # temporary
-                        continue
-
-                    if self.remove_files_without_targets:
-                        if file in files_without_targets:
+            with open(osp.join(self.dataset_folder, self.split + ".txt"), "a") as index:
+                for file in tqdm.tqdm(sorted_files, total=len(sorted_files), desc="Filtering data files", leave=False):
+                    try:
+                        if self.skip_processed_files and (file in files_without_targets or file in files_with_targets):
                             continue
 
-                        try:
-                            lbl = self.get_label(file, file.replace(self.data_folder, self.label_folder).replace(".bmp", "_label.npy"), throw_exception=True)
-                        except MaxDiskUsageError:
-                            print("Maximum allowed disk usage reached, terminating file search")
-                            break
-                        except OSError:
-                            print("Maximum disk capacity reached, terminating file search")
-                            break
+                        file_time = datetime.datetime.strptime(file.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S")
+                        file_radar_type = file.split("/")[-2]
 
-                        ranges_with_targets = []
-                        ranges_without_targets = []
+                        if file_time - last_time[file_radar_type] < datetime.timedelta(seconds=self.min_data_interval):
+                            filter_stats["Time"] += 1
+                            continue
 
-                        for j in range(0, len(self.data_ranges)):
-                            if np.any(lbl[self.data_ranges[j]] == self.LABELS["ais"]):
-                                ranges_with_targets.append(j)
+                        basename = osp.splitext(file)[0]
+                        t = self.data_loader.get_time_from_basename(basename)
+                        sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
+
+                        ais_targets = self.data_loader.load_ais_targets_sensor(t, sensor, sensor_index)
+
+                        if self.remove_files_without_targets and file not in files_with_targets:
+                            if file in files_without_targets:
+                                continue
+                            ais_targets = self.ais_targets_to_list(ais_targets)
+                            ais_targets_in_range = [t for t in ais_targets if t[1] <= self.max_range]
+
+                            if len(ais_targets_in_range) > 0:
+                                if self.remove_hidden_targets:
+                                    lbl_path = file.replace(self.data_folder, self.label_folder).replace(".bmp", "_label.npy")
+                                    try:
+                                        lbl = self.get_label(file, lbl_path, throw_exception=True)
+                                    except MaxDiskUsageError:
+                                        print("Allowed disk space used up, terminating search.")
+                                        break
+                                    except OSError:
+                                        print("No more available disk space, terminating search.")
+                                        break
+
+                                    if np.any(lbl[:, :self.max_range] == self.LABELS["ais"]):
+                                        processed_files_index.write("{};true\n".format(file))
+                                    else:
+                                        processed_files_index.write("{};false\n".format(file))
+                                        files_without_targets.append(file)
+                                        filter_stats["No targets"] += 1
+                                        remove(lbl_path)
+                                        continue
                             else:
-                                ranges_without_targets.append(j)
+                                processed_files_index.write("{};false\n".format(file))
+                                files_without_targets.append(file)
+                                filter_stats["No targets"] += 1
+                                continue
 
-                        if len(ranges_with_targets) > 0:
-                            ais_targets = self.data_loader.load_ais_targets_sensor(t, sensor, sensor_index)
-                            target_locations = [np.round(target[0], decimals=0).astype(np.int64).tolist() for target in ais_targets]
+                        img = self.data_loader.load_image(t, sensor, sensor_index)
+                        if img is None or type(img) == "list":  # check if data is corrupted
+                            filter_stats["Missing data"] += 1
+                            continue
 
-                            filtered_files.append([file, "/".join([str(t) for t in target_locations])])
+                        last_time[file_radar_type] = file_time
+                        file_rel_path = osp.relpath(file, start=self.data_folder)
+                        index.write("{};{}\n".format(file_rel_path, self.ais_targets_to_string(ais_targets)))
 
-                            last_time[file_radar_type] = file_time
-                            processed_files_index.write("{};true\n".format(file))
-                        else:
-                            processed_files_index.write("{};false\n".format(file))
-                            files_without_targets.append(file)
+                    except Exception as e:  # temporary
+                        print("An error occurred in processing of image {}, skipping".format(file))
+                        print(e)
+                        processed_files_index.write("{};false\n".format(file))
+                        files_without_targets.append(file)
+                        continue
+
+        #print("{} data files left after filtering (time: {}, no targets: {})".format(len(filtered_files), filter_stats["Time"], filter_stats["No targets"]))
 
                             label_path = file.replace(self.data_folder, self.label_folder).replace(".bmp", "_label.npy")
                             remove(label_path)
