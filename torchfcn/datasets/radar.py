@@ -637,6 +637,54 @@ class RadarDatasetFolder(data.Dataset):
                 last_filename = data_file
                 file.writelines(lines)
 
+    def point_in_range(self, point, data_range, margin=0):
+        return ((data_range[0].start is None or point[0] - margin >= data_range[0].start) and (
+                    data_range[0].stop is None or point[0] + margin <= data_range[0].stop)) \
+               and ((data_range[1].start is None or point[1] - margin >= data_range[1].start) and (
+                    data_range[1].stop is None or point[1] + margin <= data_range[1].stop))
+
+    def ais_targets_to_list(self, ais_targets, locations_per_target=1):
+        assert type(ais_targets[0]) == np.ndarray
+        res = []
+
+        for target in ais_targets:
+            if locations_per_target == 1:
+                res.append(np.round(target[0], decimals=0).astype(np.int64).tolist())
+            else:
+                target_locs = []
+                for target_loc in target:
+                    target_locs.append(np.round(target_loc, decimals=0).astype(np.int64).tolist())
+                    if len(target_locs) >= locations_per_target:
+                        break
+                res.append(target_locs)
+
+        return res
+
+    def ais_targets_to_string(self, ais_targets, locations_per_target=1):
+        if len(ais_targets) == 0:
+            return "[]"
+
+        if type(ais_targets[0]) == np.ndarray:
+            ais_targets = self.ais_targets_to_list(ais_targets, locations_per_target=locations_per_target)
+
+        if locations_per_target != 1:
+            raise NotImplementedError
+
+        return "/".join([str(t) for t in ais_targets])
+
+    def ais_targets_string_to_list(self, ais_targets_string):
+        ais_targets = []
+
+        if ais_targets_string == "":
+            return None
+        elif ais_targets_string == "[]":
+            return ais_targets
+
+        for target in ais_targets_string.split("/"):
+            target = target.strip("[]").split(",")
+            ais_targets.append([int(target[0]), int(target[1])])
+
+        return ais_targets
 
 if __name__ == "__main__":
     from dataloader import DataLoader
