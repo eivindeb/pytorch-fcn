@@ -51,6 +51,45 @@ class RadarDataLoaderTests(unittest.TestCase):
         ais_targets = self.dataset.ais_targets_string_to_list("[]")
         self.assertEqual(ais_targets, [])
 
+    def test_set_data_ranges(self):
+        self.assertEqual(len(self.dataset.data_ranges), 3)  # default
+
+        with self.assertRaises(ValueError):
+            self.dataset.set_data_ranges(-1, 0)
+
+        max_h = self.dataset.image_height
+        max_w = self.dataset.image_width
+
+        self.dataset.set_data_ranges(0, 0)
+        self.assertEqual(len(self.dataset.data_ranges), 1)
+        self.assertEqual(self.dataset.data_ranges[0], (slice(0, max_h, None), slice(0, max_w, None)))
+
+        self.dataset.set_data_ranges(0, 1)
+        self.assertEqual(len(self.dataset.data_ranges), 2)
+        self.assertEqual(self.dataset.data_ranges[0], (slice(0, max_h, None), slice(0, int(max_w / 2), None)))
+        self.assertEqual(self.dataset.data_ranges[1], (slice(0, max_h, None), slice(int(max_w / 2), max_w, None)))
+
+        self.dataset.set_data_ranges(1, 0)
+        self.assertEqual(len(self.dataset.data_ranges), 2)
+        self.assertEqual(self.dataset.data_ranges[0], (slice(0, int(max_h / 2), None), slice(0, max_w, None)))
+        self.assertEqual(self.dataset.data_ranges[1], (slice(int(max_h / 2), max_h, None), slice(0, max_w, None)))
+
+        self.dataset.set_data_ranges(1, 1)
+        self.assertEqual(len(self.dataset.data_ranges), 4)
+        self.assertEqual(self.dataset.data_ranges[0], (slice(0, int(max_h / 2), None), slice(0, int(max_w / 2), None)))
+        self.assertEqual(self.dataset.data_ranges[1], (slice(0, int(max_h / 2), None), slice(int(max_w / 2), max_w, None)))
+        self.assertEqual(self.dataset.data_ranges[2], (slice(int(max_h / 2), max_h, None), slice(0, int(max_w / 2), None)))
+        self.assertEqual(self.dataset.data_ranges[3], (slice(int(max_h / 2), max_h, None), slice(int(max_w / 2), max_w, None)))
+
+        overlap = 20
+        self.dataset.set_data_ranges(1, 1, overlap=overlap)
+        self.assertEqual(len(self.dataset.data_ranges), 4)
+        self.assertEqual(self.dataset.data_ranges[0], (slice(0, int(max_h / 2) + overlap, None), slice(0, int(max_w / 2) + overlap, None)))
+        self.assertEqual(self.dataset.data_ranges[1], (slice(0, int(max_h / 2) + overlap, None), slice(int(max_w / 2) - overlap, max_w, None)))
+        self.assertEqual(self.dataset.data_ranges[2], (slice(int(max_h / 2) - overlap, max_h, None), slice(0, int(max_w / 2) + overlap, None)))
+        self.assertEqual(self.dataset.data_ranges[3], (slice(int(max_h / 2) - overlap, max_h, None), slice(int(max_w / 2) - overlap, max_w, None)))
+
+
 class RadarDataLoaderConfigTests(unittest.TestCase):
     def setUp(self):
         from radar import RadarDatasetFolder
