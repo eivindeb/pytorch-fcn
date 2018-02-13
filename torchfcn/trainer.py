@@ -117,9 +117,22 @@ class Trainer(object):
                     data, target = data.cuda(), target.cuda()
                 data, target = Variable(data, volatile=True), Variable(target)
                 score = self.model(data)
-
-                loss = cross_entropy2d(score, target, weight=torch.from_numpy(self.train_loader.dataset.class_weights).float().cuda(),
+                try:
+                    loss = cross_entropy2d(score, target, weight=torch.from_numpy(self.train_loader.dataset.class_weights).float().cuda(),
                                        size_average=self.size_average)
+                except ValueError:
+                    filename = self.train_loader.dataset.files["train"][batch_idx]["data"][0]
+                    self.logger.warning("Whole label for {} is unlabeled (-1)".format(filename))
+                    del target, data
+                    if "loss" in locals():
+                        del loss
+                    if "score" in locals():
+                        del score
+                    if "lbl_pred" in locals():
+                        del lbl_pred
+                    if "lbl_true" in locals():
+                        del lbl_true
+                    continue
                 if np.isnan(float(loss.data[0])):
                     del loss, data, target, score
                     filename = self.val_loader.dataset.files["valid"][batch_idx]["data"][0].split("/")
@@ -225,8 +238,22 @@ class Trainer(object):
                 self.optim.zero_grad()
                 score = self.model(data)
 
-                loss = cross_entropy2d(score, target, weight=torch.from_numpy(self.train_loader.dataset.class_weights).float().cuda(),
+                try:
+                    loss = cross_entropy2d(score, target, weight=torch.from_numpy(self.train_loader.dataset.class_weights).float().cuda(),
                                        size_average=self.size_average)
+                except ValueError:
+                    filename = self.train_loader.dataset.files["train"][batch_idx]["data"][0]
+                    self.logger.warning("Whole label for {} is unlabeled (-1)".format(filename))
+                    del target, data
+                    if "loss" in locals():
+                        del loss
+                    if "score" in locals():
+                        del score
+                    if "lbl_pred" in locals():
+                        del lbl_pred
+                    if "lbl_true" in locals():
+                        del lbl_true
+                    continue
                 loss /= len(data)  # average loss over batch
                 if np.isnan(float(loss.data[0])):
                     del loss, data, target, score

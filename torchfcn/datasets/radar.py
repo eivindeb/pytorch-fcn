@@ -179,8 +179,6 @@ class RadarDatasetFolder(data.Dataset):
         img = img[data_range]
         lbl = lbl[data_range]
 
-        if lbl.max() == -1:
-            return self.__getitem__(random.choice([i for i in range(len(self.files[self.split])) if i != index]))
         if self._transform:
             return self.transform(img, lbl)
         else:
