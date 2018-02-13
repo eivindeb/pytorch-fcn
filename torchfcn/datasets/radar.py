@@ -23,9 +23,7 @@ import subprocess
 TODO:
 - modify visualization function (show percentage estimation of class?)
 - make data loader continually check for new files from nas
-- move datasetfolder to root argument, write label and data folder to config file maybe along with parameters
 - calculate mean bgr in generate dataset and write to config
-- finish DataRange class or find smarter way to write what parts of image has targets
 - add weight to log dir name
 """
 
@@ -34,31 +32,8 @@ class MaxDiskUsageError(Exception):
     pass
 
 
-class DataRange:
-    def __init__(self, data_range):
-        self.data_range = self.fill_None(data_range)
-
-
-    def in_range(self, data_range):
-        pass
-
-    def fill_None(self, data_range):
-        for axis in data_range:
-            if axis.stop is None:
-                axis.stop = 0
-            if axis.start is None:
-                axis.start = -1
-            if axis.step is None:
-                axis.step = 1
-
-        return data_range
-
-#r = DataRange(np.s_[0:1000, :2000])
-#r.fill_None(r.data_range)
-
-
-
-here = osp.dirname(osp.abspath(__file__))
+class LabelSourceMissing(Exception):
+    pass
 
 
 class RadarDatasetFolder(data.Dataset):
@@ -512,11 +487,11 @@ class RadarDatasetFolder(data.Dataset):
             print("Caching labels for file {} of {}".format(i, len(files)))
             ais, land = self.get_label(f[0])
 
-    def get_label(self, data_path, label_path, throw_exception=False):
+    def get_label(self, data_path, label_path, data=None, throw_save_exception=False):
         cached_label_missing = False
         if self.cache_labels:
             try:
-                label = np.load(label_path).astype(np.int8)
+                label = np.load(label_path).astype(np.int32)
             except IOError as e:
                 cached_label_missing = True
 
@@ -526,24 +501,21 @@ class RadarDatasetFolder(data.Dataset):
             sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
             ais = self.data_loader.load_ais_layer_sensor(t, sensor, sensor_index)
 
-            if len(ais) == 0:
-                img = self.data_loader.load_image(data_path)
-                if len(img) == 0 or img is None:
-                    label = np.zeros((4096, self.max_range), dtype=np.int8)
-                else:
-                    label = np.zeros((img.shape[0], img.shape[1] if img.shape[1] < self.max_range else self.max_range), dtype=np.int8)
+            if isinstance(ais, list):
+                self.logger.warning("AIS data could not be gathered for {}".format(label_path))
+                raise LabelSourceMissing
             else:
-                label = ais.astype(np.int8)[:, :self.max_range]
+                label = ais.astype(np.int32)[:, :self.image_width]
 
             if "land" in self.class_names or self.filter_land:
                 land = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, binary=True, only_first_range_step=True if self.max_range <= 2000 else False)[:, :self.max_range]
                 label[land == 1] = self.LABELS["land"]
 
-                if self.filter_land and len(land) != 0:
-                    hidden_by_land_mask = np.empty(land.shape, dtype=np.uint8)
-                    hidden_by_land_mask[:, 0] = land[:, 0]
-                    for col in range(1, land.shape[1]):
-                        np.bitwise_or(land[:, col], hidden_by_land_mask[:, col - 1], out=hidden_by_land_mask[:, col])
+                if isinstance(land, list):
+                    self.logger.warning("Chart data could not be gathered for {}".format(label_path))
+                    raise LabelSourceMissing
+                else:
+                    land = land[:self.image_height, :self.image_width]
 
                     if self.remove_hidden_targets:
                         label[(hidden_by_land_mask == 1) & (land == 0)] = self.LABELS["hidden"]
