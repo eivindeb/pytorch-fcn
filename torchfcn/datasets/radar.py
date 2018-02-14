@@ -70,6 +70,10 @@ class RadarDatasetFolder(data.Dataset):
         self.cache_labels = config["Parameters"].getboolean("CacheLabels", False)
         self.data_folder = config["Paths"].get("DataFolder")
         self.label_folder = config["Paths"].get("LabelFolder")
+
+        if not osp.exists(self.label_folder):
+            makedirs(self.label_folder)
+
         dataloader_config = config["Paths"].get("DataloaderCFG")
 
         if dataloader_config is None:
