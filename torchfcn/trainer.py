@@ -97,15 +97,24 @@ class Trainer(object):
         self.best_mean_iu = 0
 
     def validate(self):
-        def free_memory():
-            del target, data
-            if "loss" in locals():
+        def free_memory(variables):
+            if "target" in variables:
+                nonlocal target
+                del target
+            if "data" in variables:
+                nonlocal data
+                del data
+            if "loss" in variables:
+                nonlocal loss
                 del loss
-            if "score" in locals():
+            if "score" in variables:
+                nonlocal score
                 del score
-            if "lbl_pred" in locals():
+            if "lbl_pred" in variables:
+                nonlocal lbl_pred
                 del lbl_pred
-            if "lbl_true" in locals():
+            if "lbl_true" in variables:
+                nonlocal lbl_true
                 del lbl_true
         training = self.model.training
         self.model.eval()
@@ -131,12 +140,12 @@ class Trainer(object):
                     loss = cross_entropy2d(score, target, weight=torch.from_numpy(self.train_loader.dataset.class_weights).float().cuda(),
                                        size_average=self.size_average)
                 except ValueError:
-                    free_memory()
+                    free_memory(locals())
                     filename = self.train_loader.dataset.files["train"][batch_idx]["data"][0]
                     self.logger.warning("Whole label for {} is unlabeled (-1)".format(filename))
                     continue
                 if np.isnan(float(loss.data[0])):
-                    free_memory()
+                    free_memory(locals())
                     filename = self.val_loader.dataset.files["valid"][batch_idx]["data"][0].split("/")
                     self.logger.warning("Loss was NaN while validating\n:image {}".format(filename))
                 val_loss += float(loss.data[0]) / len(data)
@@ -157,7 +166,7 @@ class Trainer(object):
                     else:
                         hist += torchfcn.utils.fast_hist(lt.numpy().flatten(), lp.flatten(), n_class)
             except RuntimeError:
-                free_memory()
+                free_memory(locals())
                 filename = self.val_loader.dataset.files[batch_idx]["data"][0]
                 self.logger.exception("Out of memory while validating:\nimage: {}".format(filename))
                 if crash_batch_idx == batch_idx:
@@ -210,15 +219,24 @@ class Trainer(object):
             self.model.train()
 
     def train_epoch(self):
-        def free_memory():
-            del target, data
-            if "loss" in locals():
+        def free_memory(variables):
+            if "target" in variables:
+                nonlocal target
+                del target
+            if "data" in variables:
+                nonlocal data
+                del data
+            if "loss" in variables:
+                nonlocal loss
                 del loss
-            if "score" in locals():
+            if "score" in variables:
+                nonlocal score
                 del score
-            if "lbl_pred" in locals():
+            if "lbl_pred" in variables:
+                nonlocal lbl_pred
                 del lbl_pred
-            if "lbl_true" in locals():
+            if "lbl_true" in variables:
+                nonlocal lbl_true
                 del lbl_true
         self.model.train()
 
@@ -250,7 +268,7 @@ class Trainer(object):
                     loss = cross_entropy2d(score, target, weight=torch.from_numpy(self.train_loader.dataset.class_weights).float().cuda(),
                                        size_average=self.size_average)
                 except ValueError:
-                    free_memory()
+                    free_memory(locals())
                     filename = self.train_loader.dataset.files["train"][batch_idx]["data"][0]
                     self.logger.warning("Whole label for {} is unlabeled (-1)".format(filename))
                     continue
@@ -258,7 +276,7 @@ class Trainer(object):
                 loss /= len(data)  # average loss over batch
 
                 if np.isnan(float(loss.data[0])):
-                    free_memory()
+                    free_memory(locals())
                     filename = self.train_loader.dataset.files["train"][batch_idx]["data"][0]
                     self.logger.warning("Loss was NaN while training\n:image {}".format(filename))
                     continue  # likely could not load image from nas, just continue
@@ -286,7 +304,7 @@ class Trainer(object):
                     break
 
             except RuntimeError:  # assumed always out of memory?
-                free_memory()
+                free_memory(locals())
                 filename = self.train_loader.dataset.files["train"][batch_idx]["data"][0]
                 self.logger.exception("Out of memory while training:\nimage: {}".format(filename))
                 if crash_batch_idx == batch_idx - 1:
