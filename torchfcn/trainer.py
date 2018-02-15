@@ -16,6 +16,8 @@ import tqdm
 
 import torchfcn
 import traceback
+import logging
+import time
 
 
 def cross_entropy2d(input, target, weight=None, size_average=True):
@@ -86,12 +88,25 @@ class Trainer(object):
             with open(osp.join(self.out, 'log.csv'), 'w') as f:
                 f.write(','.join(self.log_headers) + '\n')
 
+        logging.basicConfig(filename="trainer.log")
+        self.logger = logging.getLogger()
+
         self.epoch = 0
         self.iteration = 0
         self.max_iter = max_iter
         self.best_mean_iu = 0
 
     def validate(self):
+        def free_memory():
+            del target, data
+            if "loss" in locals():
+                del loss
+            if "score" in locals():
+                del score
+            if "lbl_pred" in locals():
+                del lbl_pred
+            if "lbl_true" in locals():
+                del lbl_true
         training = self.model.training
         self.model.eval()
 
@@ -100,37 +115,59 @@ class Trainer(object):
         val_loss = 0
         visualizations = []
 
+        crash_batch_idx = -2
+
         hist = np.zeros((n_class, n_class))
         for batch_idx, (data, target) in tqdm.tqdm(
                 enumerate(self.val_loader), total=len(self.val_loader),
                 desc='Valid iteration=%d' % self.iteration, ncols=80,
                 leave=False):
-            if self.cuda:
-                data, target = data.cuda(), target.cuda()
-            data, target = Variable(data, volatile=True), Variable(target)
-            score = self.model(data)
+            try:
+                if self.cuda:
+                    data, target = data.cuda(), target.cuda()
+                data, target = Variable(data, volatile=True), Variable(target)
+                score = self.model(data)
+                try:
+                    loss = cross_entropy2d(score, target, weight=torch.from_numpy(self.train_loader.dataset.class_weights).float().cuda(),
+                                       size_average=self.size_average)
+                except ValueError:
+                    free_memory()
+                    filename = self.train_loader.dataset.files["train"][batch_idx]["data"][0]
+                    self.logger.warning("Whole label for {} is unlabeled (-1)".format(filename))
+                    continue
+                if np.isnan(float(loss.data[0])):
+                    free_memory()
+                    filename = self.val_loader.dataset.files["valid"][batch_idx]["data"][0].split("/")
+                    self.logger.warning("Loss was NaN while validating\n:image {}".format(filename))
+                val_loss += float(loss.data[0]) / len(data)
 
-            loss = cross_entropy2d(score, target, weight=torch.from_numpy(self.train_loader.dataset.class_weights).float().cuda(),
-                                   size_average=self.size_average)
-            if np.isnan(float(loss.data[0])):
-                raise ValueError('loss is nan while validating')
-            val_loss += float(loss.data[0]) / len(data)
+                imgs = data.data.cpu()
+                lbl_pred = score.data.max(1)[1].cpu().numpy()[:, :, :]
+                lbl_true = target.data.cpu()
 
-            imgs = data.data.cpu()
-            lbl_pred = score.data.max(1)[1].cpu().numpy()[:, :, :]
-            lbl_true = target.data.cpu()
-
-            for img, lt, lp in zip(imgs, lbl_true, lbl_pred):
-                if len(visualizations) < 9:
-                    img, lt = self.val_loader.dataset.untransform(img, lt)
-                    if len(img.shape) == 2:
-                        img = np.repeat(img[:, :, np.newaxis], 3, 2)
-                    viz = fcn.utils.visualize_segmentation(
-                        lbl_pred=lp, lbl_true=lt, img=img, n_class=n_class)
-                    visualizations.append(viz)
-                    hist += torchfcn.utils.fast_hist(lt.flatten(), lp.flatten(), n_class)
+                for img, lt, lp in zip(imgs, lbl_true, lbl_pred):
+                    if len(visualizations) < 9:
+                        img, lt = self.val_loader.dataset.untransform(img, lt)
+                        if len(img.shape) == 2:
+                            img = np.repeat(img[:, :, np.newaxis], 3, 2)
+                        viz = fcn.utils.visualize_segmentation(
+                            lbl_pred=lp, lbl_true=lt, img=img, n_class=n_class)
+                        visualizations.append(viz)
+                        hist += torchfcn.utils.fast_hist(lt.flatten(), lp.flatten(), n_class)
+                    else:
+                        hist += torchfcn.utils.fast_hist(lt.numpy().flatten(), lp.flatten(), n_class)
+            except RuntimeError:
+                free_memory()
+                filename = self.val_loader.dataset.files[batch_idx]["data"][0]
+                self.logger.exception("Out of memory while validating:\nimage: {}".format(filename))
+                if crash_batch_idx == batch_idx:
+                    self.val_loader.dataset.set_data_ranges(len(self.val_loader.dataset.data_ranges), 0)  # TODO, this changes size of files list
+                    self.val_loader.dataset.reload_files_from_default_index()
                 else:
-                    hist += torchfcn.utils.fast_hist(lt.numpy().flatten(), lp.flatten(), n_class)
+                    print("Sleeping for one hour and hope it resolves itself")
+                    time.sleep(1 * 5)  # sleep for one hour
+
+                crash_batch_idx = batch_idx
 
         metrics = torchfcn.utils.label_accuracy_score_from_hist(hist)
 
@@ -173,9 +210,21 @@ class Trainer(object):
             self.model.train()
 
     def train_epoch(self):
+        def free_memory():
+            del target, data
+            if "loss" in locals():
+                del loss
+            if "score" in locals():
+                del score
+            if "lbl_pred" in locals():
+                del lbl_pred
+            if "lbl_true" in locals():
+                del lbl_true
         self.model.train()
 
         n_class = len(self.train_loader.dataset.class_names)
+
+        crash_batch_idx = -2
 
         for batch_idx, (data, target) in tqdm.tqdm(
                 enumerate(self.train_loader), total=len(self.train_loader),
@@ -190,47 +239,78 @@ class Trainer(object):
 
             assert self.model.training
 
-            if self.cuda:
-                data, target = data.cuda(), target.cuda()
-            data, target = Variable(data), Variable(target)
-            self.optim.zero_grad()
-            score = self.model(data)
+            try:
+                if self.cuda:
+                    data, target = data.cuda(), target.cuda()
+                data, target = Variable(data), Variable(target)
+                self.optim.zero_grad()
+                score = self.model(data)
 
-            loss = cross_entropy2d(score, target, weight=torch.from_numpy(self.train_loader.dataset.class_weights).float().cuda(),
-                                   size_average=self.size_average)
-            loss /= len(data)  # average loss over batch
-            if np.isnan(float(loss.data[0])):
-                print("Loss was NAN while training")
-                continue  # likely could not load image from nas, just continue
-                raise ValueError('loss is nan while training')
-            loss.backward()
-            self.optim.step()
+                try:
+                    loss = cross_entropy2d(score, target, weight=torch.from_numpy(self.train_loader.dataset.class_weights).float().cuda(),
+                                       size_average=self.size_average)
+                except ValueError:
+                    free_memory()
+                    filename = self.train_loader.dataset.files["train"][batch_idx]["data"][0]
+                    self.logger.warning("Whole label for {} is unlabeled (-1)".format(filename))
+                    continue
 
-            metrics = []
-            lbl_pred = score.data.max(1)[1].cpu().numpy()[:, :, :]
-            lbl_true = target.data.cpu().numpy()
-            acc, acc_cls, mean_iu, fwavacc = \
-                torchfcn.utils.label_accuracy_score(
-                    lbl_true, lbl_pred, n_class=n_class)
-            metrics.append((acc, acc_cls, mean_iu, fwavacc))
-            metrics = np.mean(metrics, axis=0)
+                loss /= len(data)  # average loss over batch
 
-            with open(osp.join(self.out, 'log.csv'), 'a') as f:
-                elapsed_time = (datetime.datetime.now(pytz.timezone('Europe/Oslo')) - self.timestamp_start).total_seconds()
+                if np.isnan(float(loss.data[0])):
+                    free_memory()
+                    filename = self.train_loader.dataset.files["train"][batch_idx]["data"][0]
+                    self.logger.warning("Loss was NaN while training\n:image {}".format(filename))
+                    continue  # likely could not load image from nas, just continue
+                loss.backward()
+                self.optim.step()
 
-                log = [self.epoch, self.iteration] + [loss.data[0]] + \
-                    metrics.tolist() + [''] * 5 + [elapsed_time]
-                log = map(str, log)
-                f.write(','.join(log) + '\n')
+                metrics = []
+                lbl_pred = score.data.max(1)[1].cpu().numpy()[:, :, :]
+                lbl_true = target.data.cpu().numpy()
+                acc, acc_cls, mean_iu, fwavacc = \
+                    torchfcn.utils.label_accuracy_score(
+                        lbl_true, lbl_pred, n_class=n_class)
+                metrics.append((acc, acc_cls, mean_iu, fwavacc))
+                metrics = np.mean(metrics, axis=0)
 
-            if self.iteration >= self.max_iter:
-                break
+                with open(osp.join(self.out, 'log.csv'), 'a') as f:
+                    elapsed_time = (datetime.datetime.now(pytz.timezone('Europe/Oslo')) - self.timestamp_start).total_seconds()
+
+                    log = [self.epoch, self.iteration] + [loss.data[0]] + \
+                        metrics.tolist() + [''] * 5 + [elapsed_time]
+                    log = map(str, log)
+                    f.write(','.join(log) + '\n')
+
+                if self.iteration >= self.max_iter:
+                    break
+
+            except RuntimeError:  # assumed always out of memory?
+                free_memory()
+                filename = self.train_loader.dataset.files["train"][batch_idx]["data"][0]
+                self.logger.exception("Out of memory while training:\nimage: {}".format(filename))
+                if crash_batch_idx == batch_idx - 1:
+                    self.train_loader.dataset.set_data_ranges(len(self.train_loader.dataset.data_ranges), 0)
+                    self.train_loader.dataset.reload_files_from_default_index()
+                else:
+                    print("Sleeping for one hour and hope it resolves itself")
+                    time.sleep(1 * 5)  # sleep for one hour
+
+                crash_batch_idx = batch_idx
 
     def train(self):
-        max_epoch = int(math.ceil(1. * self.max_iter / len(self.train_loader)))
-        for epoch in tqdm.trange(self.epoch, max_epoch,
-                                 desc='Train', ncols=80):
-            self.epoch = epoch
-            self.train_epoch()
-            if self.iteration >= self.max_iter:
-                break
+        try:
+            max_epoch = int(math.ceil(1. * self.max_iter / len(self.train_loader)))
+            for epoch in tqdm.trange(self.epoch, max_epoch,
+                                     desc='Train', ncols=80):
+
+                self.epoch = epoch
+                self.train_epoch()
+                if self.iteration >= self.max_iter:
+                    break
+        except Exception as e:
+            traceback.print_stack()
+            print('--------------')
+            traceback.print_exc()
+            print('--------------')
+            self.logger.exception("Unexpected error")
