@@ -135,8 +135,11 @@ class RadarDatasetFolder(data.Dataset):
         for i, cache_folder in enumerate(self.cache_folders):
             # reports in KB
             self.current_disk_usage.append(int(subprocess.check_output(["du", "-sx", cache_folder]).split()[0].decode("utf-8")) * 1e3)
-
             disk_usage = shutil.disk_usage(cache_folder)
+
+            if i >= len(self.max_disk_usage):  # No maximum specified, therefore use all available space
+                self.max_disk_usage.append(self.current_disk_usage[i] + disk_usage.free)
+
             if self.max_disk_usage[i] - self.current_disk_usage[i] > disk_usage.free:
                 print("Warning: maximum allowed disk usage is larger than the available disk space.")
 
@@ -571,31 +574,32 @@ class RadarDatasetFolder(data.Dataset):
         return class_shares
 
     def save_numpy_file(self, file_rel_path, file, throw_exception=False):
-        if all(capacity["status"] and datetime.datetime.now() - capacity["timestamp"] < datetime.timedelta(hours=1) for capacity in self.max_disk_capacity_reached):
-            if throw_exception:
-                raise OSError
-        else:
-            for i, cache_folder in enumerate(self.cache_folders):
-                try:
-                    if self.current_disk_usage[i] + file.nbytes > self.max_disk_usage[i]:
-                        if throw_exception:
-                            raise MaxDiskUsageError
-                    else:
-                        file_path = osp.join(cache_folder, file_rel_path)
-                        if not osp.exists(osp.dirname(file_path)):
-                            makedirs(osp.dirname(file_path))
+        # TODO: always evalutaes to true for some reason
+        #if all([capacity["status"] and datetime.datetime.now() - capacity["timestamp"] < datetime.timedelta(hours=1) for capacity in self.max_disk_capacity_reached]):
+        #    if throw_exception:
+        #        raise OSError
+        #else:
+        for i, cache_folder in enumerate(self.cache_folders):
+            try:
+                if self.current_disk_usage[i] + file.nbytes > self.max_disk_usage[i]:
+                    if throw_exception and i == len(self.cache_folders) - 1:
+                        raise MaxDiskUsageError
+                else:
+                    file_path = osp.join(cache_folder, file_rel_path)
+                    if not osp.exists(osp.dirname(file_path)):
+                        makedirs(osp.dirname(file_path))
 
-                        if not osp.exists(file_path):
-                            self.current_disk_usage[i] += file.nbytes
+                    if not osp.exists(file_path):
+                        self.current_disk_usage[i] += file.nbytes
 
-                        np.save(file_path, file)
+                    np.save(file_path, file)
 
-                        return file_path
-                except OSError:  # numpy cannot allocate enough free space
-                    if throw_exception:
-                        raise OSError
-                    self.max_disk_capacity_reached[i]["status"] = True
-                    self.max_disk_capacity_reached[i]["timestamp"] = datetime.datetime.now()
+                    return file_path
+            except OSError:  # numpy cannot allocate enough free space
+                self.max_disk_capacity_reached[i]["status"] = True
+                self.max_disk_capacity_reached[i]["timestamp"] = datetime.datetime.now()
+                if throw_exception and i == len(self.cache_folders) - 1:
+                    raise OSError
 
         return None
 
