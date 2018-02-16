@@ -31,6 +31,10 @@ TODO:
 """
 
 
+class MissingStatsError(Exception):
+    pass
+
+
 class MaxDiskUsageError(Exception):
     pass
 
@@ -159,6 +163,12 @@ class RadarDatasetFolder(data.Dataset):
 
             # TODO: calculate mean and other data and save in dataset folder
 
+        try:
+            self.read_dataset_stats_from_file()
+        except (IOError, MissingStatsError) as e:
+            print(e)
+            #self.calculate_dataset_stats()
+
     def __len__(self):
         return len(self.files[self.split])
 
@@ -243,6 +253,25 @@ class RadarDatasetFolder(data.Dataset):
                 return label_path
 
         return None
+
+    def calculate_dataset_stats(self):
+        dataset_mean = self.get_mean()
+        self.mean_bgr = dataset_mean
+        config = ConfigParser()
+        config.read(osp.join(self.dataset_folder, "stats.txt"))
+        config["Training"]["MeanBackground"] = dataset_mean
+        with open(osp.join(self.dataset_folder, "stats.txt"), 'w') as cfgout:
+            config.write(cfgout)
+
+
+    def read_dataset_stats_from_file(self):
+        config = ConfigParser()
+        with open(osp.join(self.dataset_folder, "stats.txt"), 'r') as stats_cfg:
+            config.read_file(stats_cfg)
+            self.mean_bgr = config["Training"].getfloat("MeanBackground")
+            if self.mean_bgr is None:
+                raise MissingStatsError
+
 
     def reload_files_from_default_index(self):
         self.load_files_from_index(osp.join(self.dataset_folder, self.split + ".txt"))
@@ -490,23 +519,24 @@ class RadarDatasetFolder(data.Dataset):
     def get_mean(self):
         mean_sum = 0
         missing_files = []
+        processed_files = []
         if "train" not in self.files:
             self.load_files_from_index(osp.join(self.dataset_folder, "train.txt"))
-        for file in tqdm.tqdm(self.files["train"], total=len(self.files[self.split]),
+        for entry in tqdm.tqdm(self.files["train"], total=len(self.files[self.split]),
                               desc="Calculating mean for dataset"):
-            file = file["data"]
-            # load image
-            basename = osp.splitext(file[0])[0]
-            t = self.data_loader.get_time_from_basename(basename)
-            sensor, sensor_index, subsensor_index = self.data_loader.get_sensor_from_basename(basename)
+            if entry["data"] in processed_files:
+                continue
 
-            img = self.data_loader.load_image(t, sensor, sensor_index, subsensor_index)
-            if img is not None:
-                data_range = self.data_ranges[file[1]]
-                mean_sum += np.mean(img[data_range], dtype=np.float64)
-            else:
-                missing_files.append(file[0])
-        return mean_sum/(len(self.files[self.split]) - len(missing_files))
+            # load image
+            try:
+                img = self.load_image(entry["data"])
+            except DataFileNotFound:
+                missing_files.append(entry)
+
+            mean_sum += np.mean(img, dtype=np.float64)
+            processed_files.append(entry["data"])
+
+        return mean_sum/len(processed_files)
 
     def get_mean_of_columns(self):
         mean_sum = np.zeros((1, 2000))
