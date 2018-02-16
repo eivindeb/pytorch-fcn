@@ -39,6 +39,10 @@ class LabelSourceMissing(Exception):
     pass
 
 
+class DataFileNotFound(Exception):
+    pass
+
+
 class RadarDatasetFolder(data.Dataset):
     class_weights = np.array([  # based on frequency of targets in data
         1,
@@ -154,12 +158,20 @@ class RadarDatasetFolder(data.Dataset):
         data_path = self.files[self.split][index]["path"]
         data_range = self.data_ranges[self.files[self.split][index]["range"]]
 
-        img = self.load_image(data_path)
+        try:
+            img = self.load_image(data_path)
+        except DataFileNotFound:
+            indexes = list(range(len(self)))
+            indexes.remove(index)
+            return self.__getitem__(random.choice(indexes))
+
         # load label
         try:
             lbl = self.get_label(data_path, data=img)
         except LabelSourceMissing:
-            print("halla")  # TODO: handle in same way as missing data
+            indexes = list(range(len(self)))
+            indexes.remove(index)
+            return self.__getitem__(random.choice(indexes))
 
         if self.coordinate_system == "Cartesian":
             cart = self.data_loader.transform_image_from_sensor(t, sensor, sensor_index, dim=2828, scale=3.39,
@@ -196,7 +208,10 @@ class RadarDatasetFolder(data.Dataset):
         t = self.data_loader.get_time_from_basename(basename)
         sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
 
-        return self.data_loader.load_image(t, sensor, sensor_index)
+        img = self.data_loader.load_image(t, sensor, sensor_index)
+        if type(img) == list:
+            raise DataFileNotFound
+        return img
 
     def get_data_path(self, radar_relative_path):
         return osp.join(self.data_folder, radar_relative_path)
