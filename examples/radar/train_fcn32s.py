@@ -22,7 +22,8 @@ configurations = {
         lr=1.0e-10*0.07,  # the standard learning rate for VOC images (500x375) multiplied by ratio of radar dataset image size (1365x2000)
         momentum=0.99,
         weight_decay=0.0005,
-        interval_validate=6918,
+        interval_validate=60000,
+        interval_checkpoint=10000,
     )
 }
 
@@ -161,6 +162,7 @@ def main():
         out=out,
         max_iter=cfg['max_iteration'],
         interval_validate=cfg.get('interval_validate', len(train_loader)),
+        interval_checkpoint=cfg.get("interval_checkpoint", None),
     )
     trainer.epoch = start_epoch
     trainer.iteration = start_iteration

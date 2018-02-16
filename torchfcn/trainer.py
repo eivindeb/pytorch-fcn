@@ -47,7 +47,7 @@ class Trainer(object):
 
     def __init__(self, cuda, model, optimizer,
                  train_loader, val_loader, out, max_iter,
-                 size_average=False, interval_validate=None):
+                 size_average=False, interval_validate=None, interval_checkpoint=None):
         self.cuda = cuda
 
         self.model = model
@@ -64,6 +64,10 @@ class Trainer(object):
             self.interval_validate = len(self.train_loader)
         else:
             self.interval_validate = interval_validate
+
+        self.interval_checkpoint = interval_checkpoint
+
+
 
         self.out = out
         if not osp.exists(self.out):
@@ -254,6 +258,17 @@ class Trainer(object):
 
             if self.iteration % self.interval_validate == 0 and self.iteration != 0:
                 self.validate()
+
+            if self.interval_checkpoint is not None and self.iteration % self.interval_checkpoint == 0:
+                torch.save({
+                    'out': self.out,
+                    'epoch': self.epoch,
+                    'iteration': self.iteration,
+                    'arch': self.model.__class__.__name__,
+                    'optim_state_dict': self.optim.state_dict(),
+                    'model_state_dict': self.model.state_dict(),
+                    'best_mean_iu': self.best_mean_iu,
+                }, osp.join(self.out, 'checkpoint.pth.tar'))
 
             assert self.model.training
 
