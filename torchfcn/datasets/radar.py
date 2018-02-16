@@ -155,8 +155,9 @@ class RadarDatasetFolder(data.Dataset):
         return len(self.files[self.split])
 
     def __getitem__(self, index):
-        data_path = self.files[self.split][index]["path"]
+        data_path = self.files[self.split][index]["data"]
         data_range = self.data_ranges[self.files[self.split][index]["range"]]
+        label_path = self.files[self.split][index]["label"]
 
         try:
             img = self.load_image(data_path)
@@ -167,7 +168,7 @@ class RadarDatasetFolder(data.Dataset):
 
         # load label
         try:
-            lbl = self.get_label(data_path, data=img)
+            lbl = self.get_label(data_path, label_path, data=img)
         except LabelSourceMissing:
             indexes = list(range(len(self)))
             indexes.remove(index)
@@ -267,7 +268,10 @@ class RadarDatasetFolder(data.Dataset):
                             line = line[:edit_pos + 1] + ais_targets_string
 
                         if not self.remove_files_without_targets or any(self.point_in_range(target, data_range, margin=30) for target in target_locations):
-                            self.files[self.split].append({"path": self.get_data_path(filename), "range": i})
+                            self.files[self.split].append({ "data": self.get_data_path(filename),
+                                                            "label": self.get_label_path(filename) if self.cache_labels else None,
+                                                            "range": i
+                                                            })
                 if line_edited:
                     file_edited = True
                     lines[line_num] = line + "\n"
@@ -325,7 +329,7 @@ class RadarDatasetFolder(data.Dataset):
         splits = ["train", "valid", "test"]
         splits.remove(self.split)
 
-        dataset_files = [file["data"][0] for file in self.files[self.split]]
+        dataset_files = [file["data"] for file in self.files[self.split]]
 
         for split in splits:
             split_index = osp.join(self.dataset_folder, split + ".txt")
@@ -548,7 +552,7 @@ class RadarDatasetFolder(data.Dataset):
             print("Caching labels for file {} of {}".format(i, len(files)))
             ais, land = self.get_label(f[0])
 
-    def get_label(self, data_path, data=None, throw_save_exception=False):
+    def get_label(self, data_path, label_path=None, data=None, throw_save_exception=False):
         cached_label_missing = False
         if self.cache_labels:
             try:
@@ -557,13 +561,15 @@ class RadarDatasetFolder(data.Dataset):
                 cached_label_missing = True
 
         if not self.cache_labels or cached_label_missing:
+            label_path = label_path if label_path is not None else self.get_label_path(data_path)
+
             basename = osp.splitext(data_path)[0]
             t = self.data_loader.get_time_from_basename(basename)
             sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
             ais = self.data_loader.load_ais_layer_sensor(t, sensor, sensor_index)
 
             if isinstance(ais, list):
-                self.logger.warning("AIS data could not be gathered for {}".format(self.get_label_path(data_path)))
+                self.logger.warning("AIS data could not be gathered for {}".format(label_path))
                 raise LabelSourceMissing
             else:
                 label = ais.astype(np.int32)[:, :self.image_width]
@@ -572,7 +578,7 @@ class RadarDatasetFolder(data.Dataset):
                 land = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, binary=True, only_first_range_step=True if self.image_width <= 2000 else False)
 
                 if isinstance(land, list):
-                    self.logger.warning("Chart data could not be gathered for {}".format(self.get_label_path(data_path)))
+                    self.logger.warning("Chart data could not be gathered for {}".format(label_path)
                     raise LabelSourceMissing
                 else:
                     land = land[:self.image_height, :self.image_width]
@@ -592,7 +598,7 @@ class RadarDatasetFolder(data.Dataset):
                 label[2000:2080, :] = self.LABELS["unlabeled"]
 
             if cached_label_missing:
-                self.save_numpy_file(self.get_label_path(data_path), label.astype(np.int8), throw_exception=throw_save_exception)
+                self.save_numpy_file(label_path, label.astype(np.int8), throw_exception=throw_save_exception)
 
         if self.remove_hidden_targets:
             label[(label == self.LABELS["ais"]) & (label == self.LABELS["unknown"])] = self.LABELS["unknown"]
@@ -768,7 +774,7 @@ class RadarDatasetFolder(data.Dataset):
                 )
 
     def show_image(self, index):
-        data_path = self.files[self.split][index]["path"]
+        data_path = self.files[self.split][index]["data"]
         data_range = self.data_ranges[self.files[self.split][index]["range"]]
 
         img = self.load_image(data_path)[data_range]
@@ -778,10 +784,11 @@ class RadarDatasetFolder(data.Dataset):
         cv2.destroyAllWindows()
 
     def show_label(self, index):
-        data_path = self.files[self.split][index]["path"]
+        data_path = self.files[self.split][index]["data"]
         data_range = self.data_ranges[self.files[self.split][index]["range"]]
+        label_path = self.files[self.split][index]["label"]
 
-        lbl = self.get_label(data_path)[data_range]
+        lbl = self.get_label(data_path, label_path)[data_range]
         lbl = cv2.resize(lbl.astype(np.float64), (0, 0), fx=0.5, fy=0.5)  # bug with int types
         lbl = lbl.astype(np.int32)
         lbl_3ch = np.zeros((lbl.shape[0], lbl.shape[1], 3), dtype=np.uint8)
@@ -795,13 +802,14 @@ class RadarDatasetFolder(data.Dataset):
         cv2.destroyAllWindows()
 
     def show_image_with_label(self, index):
-        data_path = self.files[self.split][index]["path"]
+        data_path = self.files[self.split][index]["data"]
         data_range = self.data_ranges[self.files[self.split][index]["range"]]
+        label_path = self.files[self.split][index]["label"]
 
         img = self.load_image(data_path)[data_range]
         #img = cv2.resize(img, (0, 0), fx=0.5, fy=0.5)
 
-        lbl = self.get_label(data_path)[data_range]
+        lbl = self.get_label(data_path, label_path)[data_range]
         #lbl = cv2.resize(lbl.astype(np.float64), (0, 0), fx=0.5, fy=0.5)  # bug with int types
         #lbl = lbl.astype(np.int32)
         lbl_3ch = np.zeros((lbl.shape[0], lbl.shape[1], 3), dtype=np.uint8)
