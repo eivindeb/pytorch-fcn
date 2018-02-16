@@ -73,10 +73,15 @@ class RadarDatasetFolder(data.Dataset):
             exit(0)
         self.cache_labels = config["Parameters"].getboolean("CacheLabels", False)
         self.data_folder = config["Paths"].get("DataFolder")
-        self.label_folder = config["Paths"].get("LabelFolder")
+        self.cache_folders = config["Paths"].get("CacheFolder(s)").split(",")
 
-        if not osp.exists(self.label_folder):
-            makedirs(self.label_folder)
+        if self.cache_labels and self.cache_folders is None:
+            print("Cache labels is set to true, but no label folder is provided.")
+            exit(0)
+
+        for cache_folder in self.cache_folders:
+            if not osp.exists(cache_folder):
+                makedirs(cache_folder)
 
         dataloader_config = config["Paths"].get("DataloaderCFG")
 
@@ -88,10 +93,6 @@ class RadarDatasetFolder(data.Dataset):
             print("Configuration file missing required field: DataFolder")
             exit(0)
 
-        if self.cache_labels and self.label_folder is None:
-            print("Cache labels is set to true, but no label folder is provided.")
-            exit(0)
-
         self.radar_types = [radar for radar in config["Parameters"].get("RadarTypes", "Radar0,Radar1,Radar2").split(",")]
         self.filter_land = config["Parameters"].getboolean("FilterLand", False)
         self.remove_hidden_targets = config["Parameters"].getboolean("RemoveHiddenTargets", True)
@@ -101,8 +102,7 @@ class RadarDatasetFolder(data.Dataset):
         self.min_data_interval = config["Parameters"].getint("MinDataIntervalSeconds", 0)
         self.skip_processed_files = config["Parameters"].getboolean("SkipProcessedFiles", True)
         self.coordinate_system = config["Parameters"].get("CoordinateSystem", "Polar")
-        self.image_width = config["Parameters"].getint("MaxRange", 2000)
-        self.max_disk_usage = config["Parameters"].getint("MaximumDiskUsage", None)
+        self.max_disk_usage = config["Parameters"].get("MaximumDiskUsage", None)
         self.set_splits = [float(s) for s in config["Parameters"].get("SetSplits", "0.95,0.025,0.025").split(",")]
         self.image_width = config["Parameters"].getint("ImageWidth", 2000)
         self.image_height = config["Parameters"].getint("ImageHeight", 4096)
@@ -115,21 +115,29 @@ class RadarDatasetFolder(data.Dataset):
         self.set_data_ranges(height_divisons, width_divisons, overlap=overlap)
 
         if sum(self.set_splits) != 1:
-            print("Desired set split does not add up to 1, instead {}".format(sum(self.set_splits)))
+            print("Desired set split does not sum to 1, instead {}".format(sum(self.set_splits)))
             exit(0)
 
         if self.cache_labels and self.max_disk_usage is None:
             print("Warning: No maximum disk usage specified, using all available space.")
             exit(0)
 
-        # reports in KB
-        self.current_disk_usage = int(subprocess.check_output(["du", "-sx", "/data/polarlys/labels"]).split()[0].decode("utf-8")) * 1e3
+        if self.max_disk_usage is not None:
+            self.max_disk_usage = [int(number) for number in self.max_disk_usage.split(",")]
 
-        disk_usage = shutil.disk_usage(self.label_folder)
-        if self.max_disk_usage - self.current_disk_usage > disk_usage.free:
-            print("Warning: maximum allowed disk usage is larger than the available disk space.")
+        self.current_disk_usage = []
+        self.max_disk_capacity_reached = []
 
-        self.max_disk_capacity_reached = {"status": disk_usage.free < 1e6, "timestamp": datetime.datetime.now()}
+        for i, cache_folder in enumerate(self.cache_folders):
+            # reports in KB
+            self.current_disk_usage.append(int(subprocess.check_output(["du", "-sx", cache_folder]).split()[0].decode("utf-8")) * 1e3)
+
+            disk_usage = shutil.disk_usage(cache_folder)
+            if self.max_disk_usage[i] - self.current_disk_usage[i] > disk_usage.free:
+                print("Warning: maximum allowed disk usage is larger than the available disk space.")
+
+            # check if less than 1 MB is free
+            self.max_disk_capacity_reached.append({"status": disk_usage.free < 1e6, "timestamp": datetime.datetime.now()})
 
         if "land" in self.class_names and self.filter_land:
             print("Exiting: Land is both declared as a target and filtered out, please adjust configuration.")
@@ -168,7 +176,7 @@ class RadarDatasetFolder(data.Dataset):
 
         # load label
         try:
-            lbl = self.get_label(data_path, label_path, data=img)
+            lbl = self.get_label(data_path, label_path, data=img, index=index)
         except LabelSourceMissing:
             indexes = list(range(len(self)))
             indexes.remove(index)
@@ -214,12 +222,27 @@ class RadarDatasetFolder(data.Dataset):
             raise DataFileNotFound
         return img
 
+    def data_path_to_rel_label_path(self, data_path):
+        if self.data_folder in data_path:
+            rel_label_path = osp.relpath(data_path, start=self.data_folder).replace(".bmp", "_label.npy")
+        else:
+            rel_label_path = data_path.replace(".bmp", "_label.npy")
+
+        return rel_label_path
+
     def get_data_path(self, radar_relative_path):
         return osp.join(self.data_folder, radar_relative_path)
 
     def get_label_path(self, data_path):
         """ Accepts both radar relative path, and full path"""
-        return osp.join(self.label_folder, osp.relpath(data_path, start=self.data_folder)).replace(".bmp", "_label.npy")
+        rel_label_path = self.data_path_to_rel_label_path(data_path)
+
+        for label_folder in self.cache_folders:
+            label_path = osp.join(label_folder, rel_label_path)
+            if osp.exists(label_path):
+                return label_path
+
+        return None
 
     def reload_files_from_default_index(self):
         self.load_files_from_index(osp.join(self.dataset_folder, self.split + ".txt"))
@@ -517,28 +540,34 @@ class RadarDatasetFolder(data.Dataset):
 
         return class_shares
 
-    def save_numpy_file(self, file_path, file, throw_exception=False):
-        if self.max_disk_capacity_reached["status"] and datetime.datetime.now() - self.max_disk_capacity_reached["timestamp"] < datetime.timedelta(hours=1):
+    def save_numpy_file(self, file_rel_path, file, throw_exception=False):
+        if all(capacity["status"] and datetime.datetime.now() - capacity["timestamp"] < datetime.timedelta(hours=1) for capacity in self.max_disk_capacity_reached):
             if throw_exception:
                 raise OSError
         else:
-            try:
-                if self.current_disk_usage + file.nbytes > self.max_disk_usage:
+            for i, cache_folder in enumerate(self.cache_folders):
+                try:
+                    if self.current_disk_usage[i] + file.nbytes > self.max_disk_usage[i]:
+                        if throw_exception:
+                            raise MaxDiskUsageError
+                    else:
+                        file_path = osp.join(cache_folder, file_rel_path)
+                        if not osp.exists(osp.dirname(file_path)):
+                            makedirs(osp.dirname(file_path))
+
+                        if not osp.exists(file_path):
+                            self.current_disk_usage[i] += file.nbytes
+
+                        np.save(file_path, file)
+
+                        return file_path
+                except OSError:  # numpy cannot allocate enough free space
                     if throw_exception:
-                        raise MaxDiskUsageError
-                else:
-                    if not osp.exists(osp.dirname(file_path)):
-                        makedirs(osp.dirname(file_path))
+                        raise OSError
+                    self.max_disk_capacity_reached[i]["status"] = True
+                    self.max_disk_capacity_reached[i]["timestamp"] = datetime.datetime.now()
 
-                    if not osp.exists(file_path):
-                        self.current_disk_usage += file.nbytes
-
-                    np.save(file_path, file)
-            except OSError:  # numpy cannot allocate enough free space
-                if throw_exception:
-                    raise OSError
-                self.max_disk_capacity_reached["status"] = True
-                self.max_disk_capacity_reached["timestamp"] = datetime.datetime.now()
+        return None
 
     def collect_and_cache_labels(self):
         files = self.files[self.split]
@@ -552,12 +581,12 @@ class RadarDatasetFolder(data.Dataset):
             print("Caching labels for file {} of {}".format(i, len(files)))
             ais, land = self.get_label(f[0])
 
-    def get_label(self, data_path, label_path=None, data=None, throw_save_exception=False):
+    def get_label(self, data_path, label_path=None, data=None, index=None, throw_save_exception=False):
         cached_label_missing = False
         if self.cache_labels:
             try:
                 label = np.load(self.get_label_path(data_path)).astype(np.int32)
-            except IOError as e:
+            except (IOError, AttributeError):
                 cached_label_missing = True
 
         if not self.cache_labels or cached_label_missing:
@@ -569,7 +598,7 @@ class RadarDatasetFolder(data.Dataset):
             ais = self.data_loader.load_ais_layer_sensor(t, sensor, sensor_index)
 
             if isinstance(ais, list):
-                self.logger.warning("AIS data could not be gathered for {}".format(label_path))
+                self.logger.warning("AIS data could not be gathered for {}".format(self.data_path_to_rel_label_path(data_path)))
                 raise LabelSourceMissing
             else:
                 label = ais.astype(np.int32)[:, :self.image_width]
@@ -578,7 +607,7 @@ class RadarDatasetFolder(data.Dataset):
                 land = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, binary=True, only_first_range_step=True if self.image_width <= 2000 else False)
 
                 if isinstance(land, list):
-                    self.logger.warning("Chart data could not be gathered for {}".format(label_path)
+                    self.logger.warning("Chart data could not be gathered for {}".format(self.data_path_to_rel_label_path(data_path)))
                     raise LabelSourceMissing
                 else:
                     land = land[:self.image_height, :self.image_width]
@@ -598,7 +627,9 @@ class RadarDatasetFolder(data.Dataset):
                 label[2000:2080, :] = self.LABELS["unlabeled"]
 
             if cached_label_missing:
-                self.save_numpy_file(label_path, label.astype(np.int8), throw_exception=throw_save_exception)
+                save_path = self.save_numpy_file(self.data_path_to_rel_label_path(data_path), label.astype(np.int8), throw_exception=throw_save_exception)
+                if index is not None:
+                    self.files[self.split][index]["label"] = save_path
 
         if self.remove_hidden_targets:
             label[(label == self.LABELS["ais"]) & (label == self.LABELS["unknown"])] = self.LABELS["unknown"]
@@ -788,7 +819,7 @@ class RadarDatasetFolder(data.Dataset):
         data_range = self.data_ranges[self.files[self.split][index]["range"]]
         label_path = self.files[self.split][index]["label"]
 
-        lbl = self.get_label(data_path, label_path)[data_range]
+        lbl = self.get_label(data_path, label_path, index=index)[data_range]
         lbl = cv2.resize(lbl.astype(np.float64), (0, 0), fx=0.5, fy=0.5)  # bug with int types
         lbl = lbl.astype(np.int32)
         lbl_3ch = np.zeros((lbl.shape[0], lbl.shape[1], 3), dtype=np.uint8)
@@ -809,7 +840,7 @@ class RadarDatasetFolder(data.Dataset):
         img = self.load_image(data_path)[data_range]
         #img = cv2.resize(img, (0, 0), fx=0.5, fy=0.5)
 
-        lbl = self.get_label(data_path, label_path)[data_range]
+        lbl = self.get_label(data_path, label_path, index=index)[data_range]
         #lbl = cv2.resize(lbl.astype(np.float64), (0, 0), fx=0.5, fy=0.5)  # bug with int types
         #lbl = lbl.astype(np.int32)
         lbl_3ch = np.zeros((lbl.shape[0], lbl.shape[1], 3), dtype=np.uint8)
