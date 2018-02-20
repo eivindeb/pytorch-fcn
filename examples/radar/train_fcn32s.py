@@ -23,7 +23,8 @@ configurations = {
         momentum=0.99,
         weight_decay=0.0005,
         interval_validate=60000,
-        interval_checkpoint=10000,
+        interval_checkpoint=3000,  # checkpoint every ~1 hour
+        interval_weight_update=10,
     )
 }
 
@@ -163,11 +164,11 @@ def main():
         max_iter=cfg['max_iteration'],
         interval_validate=cfg.get('interval_validate', len(train_loader)),
         interval_checkpoint=cfg.get("interval_checkpoint", None),
+        interval_weight_update=cfg.get("interval_weight_update", None),
     )
     trainer.epoch = start_epoch
     trainer.iteration = start_iteration
     trainer.train()
-
 
 if __name__ == '__main__':
     main()

@@ -47,7 +47,7 @@ class Trainer(object):
 
     def __init__(self, cuda, model, optimizer,
                  train_loader, val_loader, out, max_iter,
-                 size_average=False, interval_validate=None, interval_checkpoint=None):
+                 size_average=False, interval_validate=None, interval_checkpoint=None, interval_weight_update=None):
         self.cuda = cuda
 
         self.model = model
@@ -66,6 +66,7 @@ class Trainer(object):
             self.interval_validate = interval_validate
 
         self.interval_checkpoint = interval_checkpoint
+        self.interval_weight_update = interval_weight_update
 
 
 
@@ -248,14 +249,10 @@ class Trainer(object):
 
         crash_batch_idx = -2
 
-        for batch_idx, (data, target) in tqdm.tqdm(
-                enumerate(self.train_loader), total=len(self.train_loader),
-                desc='Train epoch=%d' % self.epoch, ncols=80, leave=False):
-            iteration = batch_idx + self.epoch * len(self.train_loader)
-            if self.iteration != 0 and (iteration - 1) != self.iteration:
-                continue  # for resuming
-            self.iteration = iteration
+        self.optim.zero_grad()
 
+        for batch_idx, (data, target) in tqdm.tqdm(enumerate(self.train_loader), total=len(self.train_loader),
+                desc='Train epoch=%d' % self.epoch, ncols=80, leave=False):
             if self.iteration % self.interval_validate == 0 and self.iteration != 0:
                 self.validate()
 
@@ -271,6 +268,12 @@ class Trainer(object):
                 }, osp.join(self.out, 'checkpoint.pth.tar'))
 
             assert self.model.training
+
+            if self.cuda:
+                data, target = data.cuda(), target.cuda()
+            data, target = Variable(data), Variable(target)
+            #self.optim.zero_grad()
+            score = self.model(data)
 
             try:
                 if self.cuda:
@@ -310,10 +313,9 @@ class Trainer(object):
                 with open(osp.join(self.out, 'log.csv'), 'a') as f:
                     elapsed_time = (datetime.datetime.now(pytz.timezone('Europe/Oslo')) - self.timestamp_start).total_seconds()
 
-                    log = [self.epoch, self.iteration] + [loss.data[0]] + \
-                        metrics.tolist() + [''] * 5 + [elapsed_time]
-                    log = map(str, log)
-                    f.write(','.join(log) + '\n')
+            if self.interval_weight_update is None or self.iteration % self.interval_weight_update == 0 and self.iteration != 0:
+                self.optim.step()
+                self.optim.zero_grad()
 
                 if self.iteration >= self.max_iter:
                     break
