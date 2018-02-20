@@ -246,7 +246,7 @@ class Trainer(object):
             if self.iteration % self.interval_validate == 0 and self.iteration != 0:
                 self.validate()
 
-            if self.interval_checkpoint is not None and self.iteration % self.interval_checkpoint == 0:
+            if self.interval_checkpoint is not None and self.iteration % self.interval_checkpoint == 0 and self.iteration != 0:
                 torch.save({
                     'out': self.out,
                     'epoch': self.epoch,
