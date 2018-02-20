@@ -122,6 +122,7 @@ class Trainer(object):
             if "lbl_true" in variables:
                 nonlocal lbl_true
                 del lbl_true
+            torch.cuda.empty_cache()
         training = self.model.training
         self.model.eval()
 
@@ -231,6 +232,7 @@ class Trainer(object):
             if "lbl_true" in variables:
                 nonlocal lbl_true
                 del lbl_true
+            torch.cuda.empty_cache()
         self.model.train()
 
         n_class = len(self.train_loader.dataset.class_names)
