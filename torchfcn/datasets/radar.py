@@ -31,6 +31,14 @@ TODO:
 """
 
 
+class WeatherDataMissing(Exception):
+    pass
+
+
+class MetadataNotFound(Exception):
+    pass
+
+
 class MissingStatsError(Exception):
     pass
 
@@ -234,6 +242,24 @@ class RadarDatasetFolder(data.Dataset):
         if type(img) == list:
             raise DataFileNotFound
         return img
+
+    def get_weather_data(self, data_path):
+        basename = osp.splitext(data_path)[0]
+        t = self.data_loader.get_time_from_basename(basename)
+        sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
+
+        meta_data = self.data_loader.get_metadata(t, sensor, sensor_index)
+
+        try:
+            return meta_data["weather"]
+        except Exception as e:
+            if not meta_data:
+                raise MetadataNotFound
+
+            if "weather" not in meta_data:
+                raise WeatherDataMissing
+
+            raise e
 
     def data_path_to_rel_label_path(self, data_path):
         if self.data_folder in data_path:
