@@ -92,7 +92,7 @@ class Trainer(object):
             with open(osp.join(self.out, 'log.csv'), 'w') as f:
                 f.write(','.join(self.log_headers) + '\n')
 
-        logging.basicConfig(filename="trainer.log")
+        logging.basicConfig(filename="trainer.log", format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
         self.logger = logging.getLogger()
 
         self.epoch = 0
