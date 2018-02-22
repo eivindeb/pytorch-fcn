@@ -39,15 +39,19 @@ class LogAnalyzer:
 
         self.data = {key: np.asarray(data_list) for key, data_list in self.data.items()}
 
-    def graph_factor(self, factor, x_axis_scale="epoch", include_validation=False, iteration_window=0):
+    def graph_factor(self, factor, x_axis_scale="epoch", include_validation=False, iteration_window=0, reject_outliers=True):
         if "train/{}".format(factor) not in self.data:
             raise UnexpectedFactor
         data = self.data["train/{}".format(factor)]
         if include_validation:
-            valid_data = self.data["valid/{}".format(factor)]
-            valid_y_values = []
-            valid_x_values = []
-            validation_idxs = self.data["validation_idxs"]
+            try:
+                valid_data = self.data["valid/{}".format(factor)]
+                valid_y_values = []
+                valid_x_values = []
+                validation_idxs = self.data["validation_idxs"]
+            except KeyError:
+                print("No validation data in log")
+                include_validation = False
 
         if x_axis_scale == "epoch":
             x_values = range(len(self.data["epoch_idxs"]))
@@ -69,6 +73,12 @@ class LogAnalyzer:
                 y_values = np.convolve(data, np.ones((iteration_window,))/iteration_window, mode="valid")
             else:
                 y_values = data
+
+            if reject_outliers:
+                d = np.abs(y_values - np.median(y_values))
+                mdev = np.median(d)
+                s = d/mdev if mdev else 0
+                y_values = y_values[s < 10]
             x_values = range(len(y_values))
             if include_validation:
                 valid_y_values = valid_data
@@ -84,6 +94,8 @@ class LogAnalyzer:
 
 
 if __name__ == "__main__":
-    log_path = "/home/eivind/Documents/dev/ntnu-project/ml/pytorch-fcn/examples/radar/logs/MODEL-fcn32s_CFG-001_MOMENTUM-0.99_INTERVAL_VALIDATE-60000_LR-2.1000000000000002e-11_INTERVAL_CHECKPOINT-5000_MAX_ITERATION-800000_WEIGHT_DECAY-0.0005_VCS-b'eb42bcf'_TIME-20180216-181256/log.csv"
+    log_path = "/home/eivind/Documents/dev/ntnu-project/ml/pytorch-fcn/examples/radar/logs/MODEL-fcn32s_CFG-001_INTERVAL_WEIGHT_UPDATE-10_INTERVAL_CHECKPOINT-3000_MOMENTUM-0.99_INTERVAL_VALIDATE-60000_WEIGHT_DECAY-0.0005_LR-7.000000000000001e-12_MAX_ITERATION-800000_VCS-b'c68e4f7'_TIME-20180222-133545/log.csv"
+    #log_path = "/home/eivind/Documents/dev/ntnu-project/ml/pytorch-fcn/examples/radar/logs/MODEL-fcn32s_CFG-001_MOMENTUM-0.99_INTERVAL_VALIDATE-60000_LR-2.1000000000000002e-11_INTERVAL_CHECKPOINT-5000_MAX_ITERATION-800000_WEIGHT_DECAY-0.0005_VCS-b'eb42bcf'_TIME-20180216-181256/log.csv"
+    log_path = "/home/eivind/Documents/dev/ntnu-project/ml/pytorch-fcn/examples/radar/logs/MODEL-fcn32s_CFG-001_LR-7.000000000000001e-12_MAX_ITERATION-800000_MOMENTUM-0.99_INTERVAL_CHECKPOINT-3000_INTERVAL_WEIGHT_UPDATE-10_INTERVAL_VALIDATE-100_WEIGHT_DECAY-0.0005_VCS-b'a41ae7a'_TIME-20180222-182224/log.csv"
     analyzer = LogAnalyzer(log_path)
-    analyzer.graph_factor("loss", x_axis_scale="iteration", include_validation=False, iteration_window=2000)
+    analyzer.graph_factor("loss", x_axis_scale="iteration", include_validation=True, iteration_window=10, reject_outliers=True)
