@@ -572,8 +572,10 @@ class RadarDatasetFolder(data.Dataset):
         processed_files = []
         if "train" not in self.files:
             self.load_files_from_index(osp.join(self.dataset_folder, "train.txt"))
-        for entry in tqdm.tqdm(self.files["train"], total=len(self.files[self.split]),
+        for i, entry in tqdm.tqdm(enumerate(self.files["train"]), total=len(self.files[self.split]),
                               desc="Calculating mean for dataset"):
+            if i % 5000 == 0 and i != 0:
+                print("Mean so far after {} images: {}".format(i, mean_sum/len(processed_files)))
             if entry["data"] in processed_files:
                 continue
 
@@ -735,11 +737,11 @@ class RadarDatasetFolder(data.Dataset):
     def update_cached_labels(self, components):
         processed_labels = []
         for entry in tqdm.tqdm(self.files[self.split], total=len(self.files[self.split]), desc="Updating cached labels", leave=False):
-            label_path = self.get_label_path(entry["path"])
+            label_path = self.get_label_path(entry["data"])
             if label_path in processed_labels:
                 continue
 
-            data_path = entry["path"]
+            data_path = entry["data"]
             try:
                 label = np.load(label_path).astype(np.int16)
             except IOError as e:
