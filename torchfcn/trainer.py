@@ -69,8 +69,6 @@ class Trainer(object):
         self.interval_checkpoint = interval_checkpoint
         self.interval_weight_update = interval_weight_update
 
-
-
         self.out = out
         if not osp.exists(self.out):
             os.makedirs(self.out)
@@ -101,6 +99,8 @@ class Trainer(object):
         self.iteration = 0
         self.max_iter = max_iter
         self.best_mean_iu = 0
+
+        self.metadata = getattr(model, "metadata", False)
 
     def validate(self):
         def free_memory(variables):
@@ -138,10 +138,19 @@ class Trainer(object):
                 enumerate(self.val_loader), total=len(self.val_loader),
                 desc='Valid iteration=%d' % self.iteration, ncols=80,
                 leave=False):
-            if self.cuda:
-                data, target = data.cuda(), target.cuda()
-            data, target = Variable(data, volatile=True), Variable(target)
-            score = self.model(data)
+
+            if self.metadata:
+                data_img = data["image"]
+                data_meta = data["metadata"]
+                if self.cuda:
+                    data_img, data_meta, target = data_img.cuda(), data_meta.cuda(), target.cuda()
+                data_img, data_meta, target = Variable(data_img, volatile=True), Variable(data_meta, volatile=True), Variable(target)
+                score = self.model(data_img, data_meta)
+            else:
+                if self.cuda:
+                    data, target = data.cuda(), target.cuda()
+                data, target = Variable(data, volatile=True), Variable(target)
+                score = self.model(data)
             try:
                 loss = cross_entropy2d(score, target, weight=torch.from_numpy(self.train_loader.dataset.class_weights).float().cuda(),
                                    size_average=self.size_average)
@@ -156,7 +165,10 @@ class Trainer(object):
                 self.logger.warning("Loss was NaN while validating\n:image {}".format(filename))
             val_loss += float(loss.data[0]) / len(data)
 
-            imgs = data.data.cpu()
+            if self.metadata:
+                imgs = data_img.data.cpu()
+            else:
+                imgs = data.data.cpu()
             lbl_pred = score.data.max(1)[1].cpu().numpy()[:, :, :]
             lbl_true = target.data.cpu()
 
@@ -259,12 +271,21 @@ class Trainer(object):
 
             assert self.model.training
 
-            if self.cuda:
-                data, target = data.cuda(), target.cuda()
-            data, target = Variable(data), Variable(target)
-            #self.optim.zero_grad()
-            score = self.model(data)
-
+            if self.metadata:
+                data_img = data["image"]
+                data_meta = data["metadata"]
+                if self.cuda:
+                    data_img, data_meta, target = data_img.cuda(), data_meta.cuda(), target.cuda()
+                data_img, data_meta, target = Variable(data_img), Variable(data_meta), Variable(target)
+                score = self.model(data_img, data_meta)
+                batch_size = len(data_img)
+            else:
+                if self.cuda:
+                    data, target = data.cuda(), target.cuda()
+                data, target = Variable(data), Variable(target)
+                #self.optim.zero_grad()
+                score = self.model(data)
+                batch_size = len(data)
             try:
                 loss = cross_entropy2d(score, target, weight=torch.from_numpy(self.train_loader.dataset.class_weights).float().cuda(),
                                    size_average=self.size_average)
@@ -274,7 +295,7 @@ class Trainer(object):
                 self.logger.warning("Whole label for {} is unlabeled (-1)".format(filename))
                 continue
 
-            loss /= len(data)  # average loss over batch
+            loss /= batch_size  # average loss over batch
 
             if np.isnan(float(loss.data[0])):
                 free_memory(locals())

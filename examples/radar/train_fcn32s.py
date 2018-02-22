@@ -125,7 +125,7 @@ def main():
 
     #val_loader.dataset.files["valid"] = val_loader.dataset.files["valid"][0:900]
 
-    model = torchfcn.models.FCN32s(n_class=train_loader.dataset.class_names.size)
+    model = torchfcn.models.FCN32s(n_class=train_loader.dataset.class_names.size, metadata=train_loader.dataset.include_weather_data)
     start_epoch = 0
     start_iteration = 0
     if resume:

@@ -119,6 +119,7 @@ class RadarDatasetFolder(data.Dataset):
         self.image_width = config["Parameters"].getint("ImageWidth", 2000)
         self.image_height = config["Parameters"].getint("ImageHeight", 4096)
         self.land_threshold = config["Parameters"].getint("LandThreshold", 70)
+        self.include_weather_data = config["Parameters"].getboolean("IncludeWeatherData", False)
 
         height_divisons = config["Parameters"].getint("HeightDivisions", 2)
         width_divisons = config["Parameters"].getint("WidthDivisions", 0)
@@ -208,8 +209,12 @@ class RadarDatasetFolder(data.Dataset):
                                                                image=np.dstack((img, lbl)).astype(np.int16), use_gpu=True)
             img = cart[:, :, 0].astype(np.uint8)
             lbl = cart[:, :, 1].astype(np.int32)
+
         img = img[data_range]
         lbl = lbl[data_range]
+
+        if self.include_weather_data:
+            img = {"metadata": self.get_weather_data(data_path), "image": img}
 
         if self._transform:
             return self.transform(img, lbl)
@@ -217,11 +222,27 @@ class RadarDatasetFolder(data.Dataset):
             return img, lbl
 
     def transform(self, img, lbl):
-        img = img.astype(np.float64)
-        img -= self.mean_bgr
-        img = np.expand_dims(img, axis=0)
-        img = torch.from_numpy(img).float()
-        lbl = torch.from_numpy(lbl).long()
+        try:
+            img = img.astype(np.float64)
+            img -= self.mean_bgr
+            img = np.expand_dims(img, axis=0)
+            img = torch.from_numpy(img).float()
+            lbl = torch.from_numpy(lbl).long()
+        except Exception as e:
+            if isinstance(img, dict):
+                img_image = img["image"]
+                img_image = img_image.astype(np.float64)
+                img_image -= self.mean_bgr
+                img_image = np.expand_dims(img_image, axis=0)
+                img_image = torch.from_numpy(img_image).float()
+                lbl = torch.from_numpy(lbl).long()
+                img_weather = torch.from_numpy(np.asarray([val for val in img["metadata"].values()])).float()  # TODO: ensure always same order
+                img["image"] = img_image
+                img["metadata"] = img_weather
+            else:
+                self.logger.exception("Something went wrong when transforming")
+                print(e)
+                raise e
         return img, lbl
 
     def untransform(self, img, lbl):
@@ -251,7 +272,7 @@ class RadarDatasetFolder(data.Dataset):
         meta_data = self.data_loader.get_metadata(t, sensor, sensor_index)
 
         try:
-            return meta_data["weather"]
+            return {key: float(val) for key, val in meta_data["weather"].items()}
         except Exception as e:
             if not meta_data:
                 raise MetadataNotFound
