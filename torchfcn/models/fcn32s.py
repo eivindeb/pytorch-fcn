@@ -140,7 +140,7 @@ class FCN32s(nn.Module):
         h = self.relu6(self.fc6(h))
         h = self.drop6(h)
 
-        if self.metadata:
+        if self.metadata:  # copy each metadata element into matrix with same height and width as h and cat as channels
             metadata_features_count = metadata.data.shape[1]
             metadata = metadata.repeat(1, h.shape[2] * h.shape[3])
             metadata = metadata.view(h.shape[2], h.shape[3], metadata_features_count)
