@@ -713,27 +713,29 @@ class RadarDatasetFolder(data.Dataset):
                 else:
                     land = land[:self.image_height, :self.image_width]
 
-                hidden_by_land_mask = np.empty(land.shape, dtype=np.uint8)
-                hidden_by_land_mask[:, 0] = land[:, 0]
-                for col in range(1, land.shape[1]):
-                    np.bitwise_or(land[:, col], hidden_by_land_mask[:, col - 1], out=hidden_by_land_mask[:, col])
-
-                if self.remove_hidden_targets:
-                    label[(hidden_by_land_mask == 1) & (label != self.LABELS["land"])] = self.LABELS["unknown"]
-                else:
-                    label[(hidden_by_land_mask == 1) & (label != self.LABELS["land"]) & (ais == 0)] = self.LABELS["unknown"]
-
-            # unlabel data blocked by mast for Radar0
-            if sensor_index == 0:
-                label[2000:2080, :] = self.LABELS["unlabeled"]
-
             if cached_label_missing:
                 save_path = self.save_numpy_file(self.data_path_to_rel_label_path(data_path), label.astype(np.int8), throw_exception=throw_save_exception)
                 if index is not None:
                     self.files[self.split][index]["label"] = save_path
 
-        if self.remove_hidden_targets:
-            label[(label == self.LABELS["ais"]) & (label == self.LABELS["unknown"])] = self.LABELS["unknown"]
+        if self.remove_hidden_targets or "unknown" in self.class_names:
+            land = (label == self.LABELS["land"])
+            hidden_by_land_mask = np.empty(land.shape, dtype=np.uint8)
+            hidden_by_land_mask[:, 0] = land[:, 0]
+            for col in range(1, land.shape[1]):
+                np.bitwise_or(land[:, col], hidden_by_land_mask[:, col - 1], out=hidden_by_land_mask[:, col])
+
+            if self.remove_hidden_targets:
+                if "unknown" in self.class_names:
+                    label[(hidden_by_land_mask == 1) & (label != self.LABELS["land"])] = self.LABELS["unknown"]
+                else:
+                    label[(hidden_by_land_mask == 1) & (label == self.LABELS["ais"])] = self.LABELS["background"]
+            else:
+                label[(hidden_by_land_mask == 1) & (label != self.LABELS["land"]) & (label != self.LABELS["ais"])] = self.LABELS["unknown"]
+
+        # unlabel data blocked by mast for Radar0
+        if "Radar0" in data_path:
+            label[2000:2080, :] = self.LABELS["unlabeled"]
 
         if "land" in self.class_names:
             if data is None:
