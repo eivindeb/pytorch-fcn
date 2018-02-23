@@ -22,7 +22,9 @@ configurations = {
         lr=1.0e-10*0.07,  # the standard learning rate for VOC images (500x375) multiplied by ratio of radar dataset image size (1365x2000)
         momentum=0.99,
         weight_decay=0.0005,
-        interval_validate=6918,
+        interval_validate=60000,
+        interval_checkpoint=3000,  # checkpoint every ~1 hour
+        interval_weight_update=10,
     )
 }
 
@@ -85,18 +87,14 @@ here = osp.dirname(osp.abspath(__file__))
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-g', '--gpu', type=int, required=True)
     parser.add_argument('-c', '--config', type=int, default=1,
                         choices=configurations.keys())
     parser.add_argument('--resume', help='Checkpoint path')
     args = parser.parse_args()
 
-    gpu = args.gpu
     cfg = configurations[args.config]
     out = get_log_dir('fcn32s', args.config, cfg)
     resume = args.resume
-
-    os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu)
     cuda = torch.cuda.is_available()
 
     torch.manual_seed(1337)
@@ -108,26 +106,26 @@ def main():
     #root = "/media/stx/LaCie1/export"
 
     #root = osp.expanduser('~/data/datasets/Radar')
-    root = "/data/polarlys"
+    root = "/home/eivind/Documents/polarlys_datasets"
 
     data_folder = "/nas0/"
     #data_folder = root
 
     kwargs = {'num_workers': 0, 'pin_memory': True} if cuda else {}
     train_loader = torch.utils.data.DataLoader(
-        torchfcn.datasets.RadarShipTargetFilterLandAndHidden(
-            root, data_folder=data_folder, label_folder=osp.join(root, "labels"), split='train', transform=True, cache_labels=True, dataset_name="final"),
+        torchfcn.datasets.RadarDatasetFolder(
+            root, split='train', cfg=osp.join(root, "polarlys_cfg.txt"), transform=True, dataset_name="2018"),
         batch_size=1, shuffle=True, **kwargs)
     val_loader = torch.utils.data.DataLoader(
-        torchfcn.datasets.RadarShipTargetFilterLandAndHidden(
-            root, data_folder=data_folder, label_folder=osp.join(root, "labels"), split='valid', transform=True, cache_labels=True, dataset_name="final", min_data_interval=0),
+        torchfcn.datasets.RadarDatasetFolder(
+            root, split='valid', cfg=osp.join(root, "polarlys_cfg.txt"), transform=True, dataset_name="2018"),
         batch_size=1, shuffle=False, **kwargs)
 
     # 2. model
 
     #val_loader.dataset.files["valid"] = val_loader.dataset.files["valid"][0:900]
 
-    model = torchfcn.models.FCN32s(n_class=2)
+    model = torchfcn.models.FCN32s(n_class=train_loader.dataset.class_names.size, metadata=train_loader.dataset.include_weather_data)
     start_epoch = 0
     start_iteration = 0
     if resume:
@@ -165,11 +163,12 @@ def main():
         out=out,
         max_iter=cfg['max_iteration'],
         interval_validate=cfg.get('interval_validate', len(train_loader)),
+        interval_checkpoint=cfg.get("interval_checkpoint", None),
+        interval_weight_update=cfg.get("interval_weight_update", None),
     )
     trainer.epoch = start_epoch
     trainer.iteration = start_iteration
     trainer.train()
-
 
 if __name__ == '__main__':
     main()

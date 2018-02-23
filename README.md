@@ -3,7 +3,7 @@
 [![PyPI Version](https://img.shields.io/pypi/v/torchfcn.svg)](https://pypi.python.org/pypi/torchfcn)
 [![Build Status](https://travis-ci.org/wkentaro/pytorch-fcn.svg?branch=master)](https://travis-ci.org/wkentaro/pytorch-fcn)
 
-Fully Convolutional Networks implemented with PyTorch.
+PyTorch implementation of [Fully Convolutional Networks](https://github.com/shelhamer/fcn.berkeleyvision.org).
 
 
 ## Requirements
@@ -22,7 +22,7 @@ Fully Convolutional Networks implemented with PyTorch.
 git clone https://github.com/wkentaro/pytorch-fcn.git
 cd pytorch-fcn
 
-conda install pytorch cuda80 torchvision -c soumith
+conda install pytorch torchvision -c pytorch
 pip install .
 ```
 
@@ -47,5 +47,5 @@ At `10fdec9`.
 |FCN8sAtOnce | [Original](https://github.com/shelhamer/fcn.berkeleyvision.org/tree/master/voc-fcn8s-atonce) | - | -     | **65.40** |
 |FCN8sAtOnce | Ours                                                                                         |11 | 96000 | 64.74 |
 
-<img src="static/fcn8s_iter28000.jpg" width="50%" />
+<img src=".readme/fcn8s_iter28000.jpg" width="50%" />
 Visualization of validation result of FCN8s.
