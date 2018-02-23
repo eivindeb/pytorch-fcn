@@ -570,9 +570,14 @@ class RadarDatasetFolder(data.Dataset):
         mean_sum = 0
         missing_files = []
         processed_files = []
+
         if "train" not in self.files:
             self.load_files_from_index(osp.join(self.dataset_folder, "train.txt"))
-        for i, entry in tqdm.tqdm(enumerate(self.files["train"]), total=len(self.files[self.split]),
+
+        sorted_files = sorted(self.files["train"],
+                              key=lambda x: (datetime.datetime.strptime(x["data"].split("/")[-1].replace(".bmp", ""),
+                                                                       "%Y-%m-%d-%H_%M_%S"), x["range"]))
+        for i, entry in tqdm.tqdm(enumerate(sorted_files), total=len(sorted_files),
                               desc="Calculating mean for dataset"):
             if i % 5000 == 0 and i != 0:
                 print("Mean so far after {} images: {}".format(i, mean_sum/len(processed_files)))
@@ -584,8 +589,21 @@ class RadarDatasetFolder(data.Dataset):
                 img = self.load_image(entry["data"])
             except DataFileNotFound:
                 missing_files.append(entry)
+                continue
 
-            mean_sum += np.mean(img, dtype=np.float64)
+            image_ranges_used = [entry["range"]]
+            for j in range(entry["range"] + 1, len(self.data_ranges)):
+                if j + i < len(sorted_files):
+                    if not entry["data"] == sorted_files[i + j]["data"]:
+                        break
+                    else:
+                        image_ranges_used.append(sorted_files[i + j]["range"])
+
+            if len(image_ranges_used) == len(self.data_ranges):
+                mean_sum += np.mean(img[:self.image_height, :self.image_width], dtype=np.float64)
+            else:
+                image_mean = sum([np.mean(img[self.data_ranges[k]], dtype=np.float64) for k in image_ranges_used])
+                mean_sum += image_mean/len(image_ranges_used)
             processed_files.append(entry["data"])
 
         return mean_sum/len(processed_files)
