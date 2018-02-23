@@ -150,7 +150,7 @@ class RadarDatasetFolder(data.Dataset):
                 self.max_disk_usage.append(self.current_disk_usage[i] + disk_usage.free)
 
             if self.max_disk_usage[i] - self.current_disk_usage[i] > disk_usage.free:
-                print("Warning: maximum allowed disk usage is larger than the available disk space.")
+                print("Warning: maximum allowed disk usage ({} GB) is larger than the available disk space ({} GB).".format(self.max_disk_usage / 1e9, disk_usage.free / 1e9))
 
             # check if less than 1 MB is free
             self.max_disk_capacity_reached.append({"status": disk_usage.free < 1e6, "timestamp": datetime.datetime.now()})

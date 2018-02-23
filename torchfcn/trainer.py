@@ -140,10 +140,10 @@ class Trainer(object):
                 leave=False):
 
             if self.metadata:
-                data_img = data["image"]
-                data_meta = data["metadata"]
                 if self.cuda:
-                    data_img, data_meta, target = data_img.cuda(), data_meta.cuda(), target.cuda()
+                    data_img, data_meta, target = data["image"].cuda(), data["metadata"].cuda(), target.cuda()
+                else:
+                    data_img, data_meta, target = data["image"], data["metadata"], target
                 data_img, data_meta, target = Variable(data_img, volatile=True), Variable(data_meta, volatile=True), Variable(target)
                 score = self.model(data_img, data_meta)
             else:
@@ -272,10 +272,10 @@ class Trainer(object):
             assert self.model.training
 
             if self.metadata:
-                data_img = data["image"]
-                data_meta = data["metadata"]
                 if self.cuda:
-                    data_img, data_meta, target = data_img.cuda(), data_meta.cuda(), target.cuda()
+                    data_img, data_meta, target = data["image"].cuda(), data["metadata"].cuda(), target.cuda()
+                else:
+                    data_img, data_meta, target = data["image"], data["metadata"], target
                 data_img, data_meta, target = Variable(data_img), Variable(data_meta), Variable(target)
                 score = self.model(data_img, data_meta)
                 batch_size = len(data_img)
@@ -356,7 +356,6 @@ class Trainer(object):
         if len(sys.argv) > 1:
             arguments.extend(sys.argv[1:])
         if resume and not any("--resume" in argument for argument in arguments):
-            arguments.extend(["--resume", "/home/eivind/Documents/dev/ntnu-project/ml/pytorch-fcn/examples/radar/logs/MODEL-fcn32s_CFG-001_MOMENTUM-0.99_INTERVAL_VALIDATE-60000_LR-2.1000000000000002e-11_INTERVAL_CHECKPOINT-5000_MAX_ITERATION-800000_WEIGHT_DECAY-0.0005_VCS-b'eb42bcf'_TIME-20180216-181256/checkpoint.pth.tar"])
-            #arguments.extend(["--resume", osp.join(self.out, "checkpoint.pth.tar")])
+            arguments.extend(["--resume", osp.join(self.out, "checkpoint.pth.tar")])
         os.execv(sys.executable, arguments)
 
