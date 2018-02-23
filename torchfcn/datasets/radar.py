@@ -774,7 +774,10 @@ class RadarDatasetFolder(data.Dataset):
                 if component in self.LABELS:
                     label[label == self.LABELS[component]] = self.LABELS["background"]
             if "chart" in components:
-                label[(label == self.LABELS["land"]) | (label == self.LABELS["unknown"])] = self.LABELS["background"]
+                if "Radar0" in data_path:
+                    label[(label == self.LABELS["land"]) | (label == self.LABELS["unknown"])] = self.LABELS["background"]
+                else:
+                    label[label == self.LABELS["unknown"]] = self.LABELS["background"]
 
             basename = osp.splitext(data_path)[0]
             t = self.data_loader.get_time_from_basename(basename)
@@ -783,7 +786,7 @@ class RadarDatasetFolder(data.Dataset):
             if "ais" in components:
                 ais = self.data_loader.load_ais_layer_sensor(t, sensor, sensor_index)[:, :self.image_width]
                 label[ais == 1] = self.LABELS["ais"]
-            if "chart" in components:
+            if "chart" in components and "Radar0" in data_path:
                 land = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, binary=True, only_first_range_step=True if self.image_width <= 2000 else False)
                 if isinstance(land, list):
                     self.logger.warning("Label {} not updated.\nChart data could not be gathered".format(label_path))
@@ -791,17 +794,8 @@ class RadarDatasetFolder(data.Dataset):
                     continue
                 else:
                     land = land[:self.image_height, :self.image_width]
-                hidden_by_land_mask = np.empty(land.shape, dtype=np.uint8)
-                hidden_by_land_mask[:, 0] = land[:, 0]
-                for col in range(1, land.shape[1]):
-                    np.bitwise_or(land[:, col], hidden_by_land_mask[:, col - 1], out=hidden_by_land_mask[:, col])
 
-                label[(hidden_by_land_mask == 1) & (land == 0)] = self.LABELS["unknown"]
                 label[land == 1] = self.LABELS["land"]
-
-            # unlabel data blocked by mast for Radar0
-            if sensor_index == 0:
-                label[2000:2080, :] = self.LABELS["unlabeled"]
 
             self.save_numpy_file(label_path, label.astype(np.int8))
             processed_labels.append(label_path)
