@@ -22,7 +22,9 @@ configurations = {
         lr=1.0e-10*0.07,  # the standard learning rate for VOC images (500x375) multiplied by ratio of radar dataset image size (1365x2000)
         momentum=0.99,
         weight_decay=0.0005,
-        interval_validate=6918,
+        interval_validate=60000,
+        interval_checkpoint=3000,  # checkpoint every ~1 hour
+        interval_weight_update=10,
     )
 }
 
@@ -123,7 +125,7 @@ def main():
 
     #val_loader.dataset.files["valid"] = val_loader.dataset.files["valid"][0:900]
 
-    model = torchfcn.models.FCN32s(n_class=train_loader.dataset.class_names.size)
+    model = torchfcn.models.FCN32s(n_class=train_loader.dataset.class_names.size, metadata=train_loader.dataset.include_weather_data)
     start_epoch = 0
     start_iteration = 0
     if resume:
@@ -161,11 +163,12 @@ def main():
         out=out,
         max_iter=cfg['max_iteration'],
         interval_validate=cfg.get('interval_validate', len(train_loader)),
+        interval_checkpoint=cfg.get("interval_checkpoint", None),
+        interval_weight_update=cfg.get("interval_weight_update", None),
     )
     trainer.epoch = start_epoch
     trainer.iteration = start_iteration
     trainer.train()
-
 
 if __name__ == '__main__':
     main()

@@ -31,11 +31,27 @@ TODO:
 """
 
 
+class WeatherDataMissing(Exception):
+    pass
+
+
+class MetadataNotFound(Exception):
+    pass
+
+
+class MissingStatsError(Exception):
+    pass
+
+
 class MaxDiskUsageError(Exception):
     pass
 
 
 class LabelSourceMissing(Exception):
+    pass
+
+
+class DataFileNotFound(Exception):
     pass
 
 
@@ -69,7 +85,16 @@ class RadarDatasetFolder(data.Dataset):
             exit(0)
         self.cache_labels = config["Parameters"].getboolean("CacheLabels", False)
         self.data_folder = config["Paths"].get("DataFolder")
-        self.label_folder = config["Paths"].get("LabelFolder")
+        self.cache_folders = config["Paths"].get("CacheFolder(s)").split(",")
+
+        if self.cache_labels and self.cache_folders is None:
+            print("Cache labels is set to true, but no label folder is provided.")
+            exit(0)
+
+        for cache_folder in self.cache_folders:
+            if not osp.exists(cache_folder):
+                makedirs(cache_folder)
+
         dataloader_config = config["Paths"].get("DataloaderCFG")
 
         if dataloader_config is None:
@@ -78,10 +103,6 @@ class RadarDatasetFolder(data.Dataset):
 
         if self.data_folder is None:
             print("Configuration file missing required field: DataFolder")
-            exit(0)
-
-        if self.cache_labels and self.label_folder is None:
-            print("Cache labels is set to true, but no label folder is provided.")
             exit(0)
 
         self.radar_types = [radar for radar in config["Parameters"].get("RadarTypes", "Radar0,Radar1,Radar2").split(",")]
@@ -93,12 +114,12 @@ class RadarDatasetFolder(data.Dataset):
         self.min_data_interval = config["Parameters"].getint("MinDataIntervalSeconds", 0)
         self.skip_processed_files = config["Parameters"].getboolean("SkipProcessedFiles", True)
         self.coordinate_system = config["Parameters"].get("CoordinateSystem", "Polar")
-        self.image_width = config["Parameters"].getint("MaxRange", 2000)
-        self.max_disk_usage = config["Parameters"].getint("MaximumDiskUsage", None)
+        self.max_disk_usage = config["Parameters"].get("MaximumDiskUsage", None)
         self.set_splits = [float(s) for s in config["Parameters"].get("SetSplits", "0.95,0.025,0.025").split(",")]
         self.image_width = config["Parameters"].getint("ImageWidth", 2000)
         self.image_height = config["Parameters"].getint("ImageHeight", 4096)
         self.land_threshold = config["Parameters"].getint("LandThreshold", 70)
+        self.include_weather_data = config["Parameters"].getboolean("IncludeWeatherData", False)
 
         height_divisons = config["Parameters"].getint("HeightDivisions", 2)
         width_divisons = config["Parameters"].getint("WidthDivisions", 0)
@@ -107,21 +128,32 @@ class RadarDatasetFolder(data.Dataset):
         self.set_data_ranges(height_divisons, width_divisons, overlap=overlap)
 
         if sum(self.set_splits) != 1:
-            print("Desired set split does not add up to 1, instead {}".format(sum(self.set_splits)))
+            print("Desired set split does not sum to 1, instead {}".format(sum(self.set_splits)))
             exit(0)
 
         if self.cache_labels and self.max_disk_usage is None:
             print("Warning: No maximum disk usage specified, using all available space.")
             exit(0)
 
-        # reports in KB
-        self.current_disk_usage = int(subprocess.check_output(["du", "-sx", "/data/polarlys/labels"]).split()[0].decode("utf-8")) * 1e3
+        if self.max_disk_usage is not None:
+            self.max_disk_usage = [int(number) for number in self.max_disk_usage.split(",")]
 
-        disk_usage = shutil.disk_usage(self.label_folder)
-        if self.max_disk_usage - self.current_disk_usage > disk_usage.free:
-            print("Warning: maximum allowed disk usage ({} GB) is larger than the available disk space ({} GB).".format(self.max_disk_usage/1e9, disk_usage.free/1e9))
+        self.current_disk_usage = []
+        self.max_disk_capacity_reached = []
 
-        self.max_disk_capacity_reached = {"status": disk_usage.free < 1e6, "timestamp": datetime.datetime.now()}
+        for i, cache_folder in enumerate(self.cache_folders):
+            # reports in KB
+            self.current_disk_usage.append(int(subprocess.check_output(["du", "-sx", cache_folder]).split()[0].decode("utf-8")) * 1e3)
+            disk_usage = shutil.disk_usage(cache_folder)
+
+            if i >= len(self.max_disk_usage):  # No maximum specified, therefore use all available space
+                self.max_disk_usage.append(self.current_disk_usage[i] + disk_usage.free)
+
+            if self.max_disk_usage[i] - self.current_disk_usage[i] > disk_usage.free:
+                print("Warning: maximum allowed disk usage ({} GB) is larger than the available disk space ({} GB).".format(self.max_disk_usage / 1e9, disk_usage.free / 1e9))
+
+            # check if less than 1 MB is free
+            self.max_disk_capacity_reached.append({"status": disk_usage.free < 1e6, "timestamp": datetime.datetime.now()})
 
         if "land" in self.class_names and self.filter_land:
             print("Exiting: Land is both declared as a target and filtered out, please adjust configuration.")
@@ -143,27 +175,46 @@ class RadarDatasetFolder(data.Dataset):
 
             # TODO: calculate mean and other data and save in dataset folder
 
+        try:
+            self.read_dataset_stats_from_file()
+        except (IOError, MissingStatsError) as e:
+            print(e)
+            #self.calculate_dataset_stats()
+
     def __len__(self):
         return len(self.files[self.split])
 
     def __getitem__(self, index):
-        data_path = self.files[self.split][index]["data"][0]
-        data_range = self.data_ranges[self.files[self.split][index]["data"][1]]
+        data_path = self.files[self.split][index]["data"]
+        data_range = self.data_ranges[self.files[self.split][index]["range"]]
+        label_path = self.files[self.split][index]["label"]
 
-        img = self.load_image(data_path)
+        try:
+            img = self.load_image(data_path)
+        except DataFileNotFound:
+            indexes = list(range(len(self)))
+            indexes.remove(index)
+            return self.__getitem__(random.choice(indexes))
+
         # load label
         try:
-            lbl = self.get_label(data_path, self.files[self.split][index]["label"], img)
+            lbl = self.get_label(data_path, label_path, data=img, index=index)
         except LabelSourceMissing:
-            print("halla")  # TODO: handle in same way as missing data
+            indexes = list(range(len(self)))
+            indexes.remove(index)
+            return self.__getitem__(random.choice(indexes))
 
         if self.coordinate_system == "Cartesian":
             cart = self.data_loader.transform_image_from_sensor(t, sensor, sensor_index, dim=2828, scale=3.39,
                                                                image=np.dstack((img, lbl)).astype(np.int16), use_gpu=True)
             img = cart[:, :, 0].astype(np.uint8)
             lbl = cart[:, :, 1].astype(np.int32)
+
         img = img[data_range]
         lbl = lbl[data_range]
+
+        if self.include_weather_data:
+            img = {"metadata": self.get_weather_data(data_path), "image": img}
 
         if self._transform:
             return self.transform(img, lbl)
@@ -171,11 +222,27 @@ class RadarDatasetFolder(data.Dataset):
             return img, lbl
 
     def transform(self, img, lbl):
-        img = img.astype(np.float64)
-        img -= self.mean_bgr
-        img = np.expand_dims(img, axis=0)
-        img = torch.from_numpy(img).float()
-        lbl = torch.from_numpy(lbl).long()
+        try:
+            img = img.astype(np.float64)
+            img -= self.mean_bgr
+            img = np.expand_dims(img, axis=0)
+            img = torch.from_numpy(img).float()
+            lbl = torch.from_numpy(lbl).long()
+        except Exception as e:
+            if isinstance(img, dict):
+                img_image = img["image"]
+                img_image = img_image.astype(np.float64)
+                img_image -= self.mean_bgr
+                img_image = np.expand_dims(img_image, axis=0)
+                img_image = torch.from_numpy(img_image).float()
+                lbl = torch.from_numpy(lbl).long()
+                img_weather = torch.from_numpy(np.asarray([val for val in img["metadata"].values()])).float()  # TODO: ensure always same order
+                img["image"] = img_image
+                img["metadata"] = img_weather
+            else:
+                self.logger.exception("Something went wrong when transforming")
+                print(e)
+                raise e
         return img, lbl
 
     def untransform(self, img, lbl):
@@ -192,7 +259,69 @@ class RadarDatasetFolder(data.Dataset):
         t = self.data_loader.get_time_from_basename(basename)
         sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
 
-        return self.data_loader.load_image(t, sensor, sensor_index)
+        img = self.data_loader.load_image(t, sensor, sensor_index)
+        if type(img) == list:
+            raise DataFileNotFound
+        return img
+
+    def get_weather_data(self, data_path):
+        basename = osp.splitext(data_path)[0]
+        t = self.data_loader.get_time_from_basename(basename)
+        sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
+
+        meta_data = self.data_loader.get_metadata(t, sensor, sensor_index)
+
+        try:
+            return {key: float(val) for key, val in meta_data["weather"].items()}
+        except Exception as e:
+            if not meta_data:
+                raise MetadataNotFound
+
+            if "weather" not in meta_data:
+                raise WeatherDataMissing
+
+            raise e
+
+    def data_path_to_rel_label_path(self, data_path):
+        if self.data_folder in data_path:
+            rel_label_path = osp.relpath(data_path, start=self.data_folder).replace(".bmp", "_label.npy")
+        else:
+            rel_label_path = data_path.replace(".bmp", "_label.npy")
+
+        return rel_label_path
+
+    def get_data_path(self, radar_relative_path):
+        return osp.join(self.data_folder, radar_relative_path)
+
+    def get_label_path(self, data_path):
+        """ Accepts both radar relative path, and full path"""
+        rel_label_path = self.data_path_to_rel_label_path(data_path)
+
+        for label_folder in self.cache_folders:
+            label_path = osp.join(label_folder, rel_label_path)
+            if osp.exists(label_path):
+                return label_path
+
+        return None
+
+    def calculate_dataset_stats(self):
+        dataset_mean = self.get_mean()
+        self.mean_bgr = dataset_mean
+        config = ConfigParser()
+        config.read(osp.join(self.dataset_folder, "stats.txt"))
+        config["Training"]["MeanBackground"] = dataset_mean
+        with open(osp.join(self.dataset_folder, "stats.txt"), 'w') as cfgout:
+            config.write(cfgout)
+
+
+    def read_dataset_stats_from_file(self):
+        config = ConfigParser()
+        with open(osp.join(self.dataset_folder, "stats.txt"), 'r') as stats_cfg:
+            config.read_file(stats_cfg)
+            self.mean_bgr = config["Training"].getfloat("MeanBackground")
+            if self.mean_bgr is None:
+                raise MissingStatsError
+
 
     def reload_files_from_default_index(self):
         self.load_files_from_index(osp.join(self.dataset_folder, self.split + ".txt"))
@@ -241,9 +370,10 @@ class RadarDatasetFolder(data.Dataset):
                             line = line[:edit_pos + 1] + ais_targets_string
 
                         if not self.remove_files_without_targets or any(self.point_in_range(target, data_range, margin=30) for target in target_locations):
-                            self.files[self.split].append({"data": [osp.join(self.data_folder, filename), i],
-                                                      "label": osp.join(self.label_folder,
-                                                                        filename.replace(".bmp", "_label.npy"))})
+                            self.files[self.split].append({ "data": self.get_data_path(filename),
+                                                            "label": self.get_label_path(filename) if self.cache_labels else None,
+                                                            "range": i
+                                                            })
                 if line_edited:
                     file_edited = True
                     lines[line_num] = line + "\n"
@@ -301,7 +431,7 @@ class RadarDatasetFolder(data.Dataset):
         splits = ["train", "valid", "test"]
         splits.remove(self.split)
 
-        dataset_files = [file["data"][0] for file in self.files[self.split]]
+        dataset_files = [file["data"] for file in self.files[self.split]]
 
         for split in splits:
             split_index = osp.join(self.dataset_folder, split + ".txt")
@@ -317,7 +447,7 @@ class RadarDatasetFolder(data.Dataset):
         files = collect_data_files_recursively(self.data_folder)
         print("Found {} data files".format(len(files)))
 
-        files = [file for file in files if file not in dataset_files]
+        files = [osp.relpath(file, start=self.data_folder) for file in files if file not in dataset_files]
 
         sorted_files = sorted(files, key=lambda x: datetime.datetime.strptime(x.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S"))
 
@@ -358,9 +488,9 @@ class RadarDatasetFolder(data.Dataset):
 
                             if len(ais_targets_in_range) > 0:
                                 if self.remove_hidden_targets:
-                                    lbl_path = file.replace(self.data_folder, self.label_folder).replace(".bmp", "_label.npy")
+                                    lbl_path = self.get_label_path(file)
                                     try:
-                                        lbl = self.get_label(file, lbl_path, throw_save_exception=True)
+                                        lbl = self.get_label(file, throw_save_exception=True)
                                     except MaxDiskUsageError:
                                         print("Allowed disk space used up, terminating search.")
                                         self.cache_labels = False
@@ -394,8 +524,7 @@ class RadarDatasetFolder(data.Dataset):
                             continue
 
                         last_time[file_radar_type] = file_time
-                        file_rel_path = osp.relpath(file, start=self.data_folder)
-                        index.write("{};{}\n".format(file_rel_path, self.ais_targets_to_string(ais_targets)))
+                        index.write("{};{}\n".format(file, self.ais_targets_to_string(ais_targets)))
 
                     except Exception as e:  # temporary
                         self.logger.exception("An exception occured while processing images, skipping.\nimage {}".format(file))
@@ -440,23 +569,26 @@ class RadarDatasetFolder(data.Dataset):
     def get_mean(self):
         mean_sum = 0
         missing_files = []
+        processed_files = []
         if "train" not in self.files:
             self.load_files_from_index(osp.join(self.dataset_folder, "train.txt"))
-        for file in tqdm.tqdm(self.files["train"], total=len(self.files[self.split]),
+        for i, entry in tqdm.tqdm(enumerate(self.files["train"]), total=len(self.files[self.split]),
                               desc="Calculating mean for dataset"):
-            file = file["data"]
-            # load image
-            basename = osp.splitext(file[0])[0]
-            t = self.data_loader.get_time_from_basename(basename)
-            sensor, sensor_index, subsensor_index = self.data_loader.get_sensor_from_basename(basename)
+            if i % 5000 == 0 and i != 0:
+                print("Mean so far after {} images: {}".format(i, mean_sum/len(processed_files)))
+            if entry["data"] in processed_files:
+                continue
 
-            img = self.data_loader.load_image(t, sensor, sensor_index, subsensor_index)
-            if img is not None:
-                data_range = self.data_ranges[file[1]]
-                mean_sum += np.mean(img[data_range], dtype=np.float64)
-            else:
-                missing_files.append(file[0])
-        return mean_sum/(len(self.files[self.split]) - len(missing_files))
+            # load image
+            try:
+                img = self.load_image(entry["data"])
+            except DataFileNotFound:
+                missing_files.append(entry)
+
+            mean_sum += np.mean(img, dtype=np.float64)
+            processed_files.append(entry["data"])
+
+        return mean_sum/len(processed_files)
 
     def get_mean_of_columns(self):
         mean_sum = np.zeros((1, 2000))
@@ -479,10 +611,9 @@ class RadarDatasetFolder(data.Dataset):
 
         for i, file in tqdm.tqdm(enumerate(self.files[self.split]), total=len(self.files[self.split]),
                                  desc="Calculating class shares for {} data".format(self.split), leave=False):
-            lbl_path = file["label"]
-            file = file["data"]
-            lbl = self.get_label(file[0], lbl_path)[:, 0:2000]
-            data_range = self.data_ranges[file[1]]
+
+            lbl = self.get_label(file["path"])[:self.image_height, :self.image_width]
+            data_range = self.data_ranges[file["range"]]
 
             for c_index, c in enumerate(self.class_names):
                 class_shares[c] += lbl[lbl == c_index].size/lbl.size
@@ -491,28 +622,35 @@ class RadarDatasetFolder(data.Dataset):
 
         return class_shares
 
-    def save_numpy_file(self, file_path, file, throw_exception=False):
-        if self.max_disk_capacity_reached["status"] and datetime.datetime.now() - self.max_disk_capacity_reached["timestamp"] < datetime.timedelta(hours=1):
-            if throw_exception:
-                raise OSError
-        else:
+    def save_numpy_file(self, file_rel_path, file, throw_exception=False):
+        # TODO: always evalutaes to true for some reason
+        #if all([capacity["status"] and datetime.datetime.now() - capacity["timestamp"] < datetime.timedelta(hours=1) for capacity in self.max_disk_capacity_reached]):
+        #    if throw_exception:
+        #        raise OSError
+        #else:
+        for i, cache_folder in enumerate(self.cache_folders):
             try:
-                if self.current_disk_usage + file.nbytes > self.max_disk_usage:
-                    if throw_exception:
+                if self.current_disk_usage[i] + file.nbytes > self.max_disk_usage[i]:
+                    if throw_exception and i == len(self.cache_folders) - 1:
                         raise MaxDiskUsageError
                 else:
+                    file_path = osp.join(cache_folder, file_rel_path)
                     if not osp.exists(osp.dirname(file_path)):
                         makedirs(osp.dirname(file_path))
 
                     if not osp.exists(file_path):
-                        self.current_disk_usage += file.nbytes
+                        self.current_disk_usage[i] += file.nbytes
 
                     np.save(file_path, file)
+
+                    return file_path
             except OSError:  # numpy cannot allocate enough free space
-                if throw_exception:
+                self.max_disk_capacity_reached[i]["status"] = True
+                self.max_disk_capacity_reached[i]["timestamp"] = datetime.datetime.now()
+                if throw_exception and i == len(self.cache_folders) - 1:
                     raise OSError
-                self.max_disk_capacity_reached["status"] = True
-                self.max_disk_capacity_reached["timestamp"] = datetime.datetime.now()
+
+        return None
 
     def collect_and_cache_labels(self):
         files = self.files[self.split]
@@ -526,22 +664,24 @@ class RadarDatasetFolder(data.Dataset):
             print("Caching labels for file {} of {}".format(i, len(files)))
             ais, land = self.get_label(f[0])
 
-    def get_label(self, data_path, label_path, data=None, throw_save_exception=False):
+    def get_label(self, data_path, label_path=None, data=None, index=None, throw_save_exception=False):
         cached_label_missing = False
         if self.cache_labels:
             try:
-                label = np.load(label_path).astype(np.int32)
-            except IOError as e:
+                label = np.load(self.get_label_path(data_path)).astype(np.int32)
+            except (IOError, AttributeError):
                 cached_label_missing = True
 
         if not self.cache_labels or cached_label_missing:
+            label_path = label_path if label_path is not None else self.get_label_path(data_path)
+
             basename = osp.splitext(data_path)[0]
             t = self.data_loader.get_time_from_basename(basename)
             sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
             ais = self.data_loader.load_ais_layer_sensor(t, sensor, sensor_index)
 
             if isinstance(ais, list):
-                self.logger.warning("AIS data could not be gathered for {}".format(label_path))
+                self.logger.warning("AIS data could not be gathered for {}".format(self.data_path_to_rel_label_path(data_path)))
                 raise LabelSourceMissing
             else:
                 label = ais.astype(np.int32)[:, :self.image_width]
@@ -550,13 +690,10 @@ class RadarDatasetFolder(data.Dataset):
                 land = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, binary=True, only_first_range_step=True if self.image_width <= 2000 else False)
 
                 if isinstance(land, list):
-                    self.logger.warning("Chart data could not be gathered for {}".format(label_path))
+                    self.logger.warning("Chart data could not be gathered for {}".format(self.data_path_to_rel_label_path(data_path)))
                     raise LabelSourceMissing
                 else:
                     land = land[:self.image_height, :self.image_width]
-
-                if data is None:
-                    data = self.load_image(data_path)[:self.image_height, :self.image_width]
 
                 hidden_by_land_mask = np.empty(land.shape, dtype=np.uint8)
                 hidden_by_land_mask[:, 0] = land[:, 0]
@@ -573,7 +710,9 @@ class RadarDatasetFolder(data.Dataset):
                 label[2000:2080, :] = self.LABELS["unlabeled"]
 
             if cached_label_missing:
-                self.save_numpy_file(label_path, label.astype(np.int8), throw_exception=throw_save_exception)
+                save_path = self.save_numpy_file(self.data_path_to_rel_label_path(data_path), label.astype(np.int8), throw_exception=throw_save_exception)
+                if index is not None:
+                    self.files[self.split][index]["label"] = save_path
 
         if self.remove_hidden_targets:
             label[(label == self.LABELS["ais"]) & (label == self.LABELS["unknown"])] = self.LABELS["unknown"]
@@ -598,11 +737,11 @@ class RadarDatasetFolder(data.Dataset):
     def update_cached_labels(self, components):
         processed_labels = []
         for entry in tqdm.tqdm(self.files[self.split], total=len(self.files[self.split]), desc="Updating cached labels", leave=False):
-            if entry["label"] in processed_labels:
+            label_path = self.get_label_path(entry["data"])
+            if label_path in processed_labels:
                 continue
 
-            label_path = entry["label"]
-            data_path = entry["data"][0]
+            data_path = entry["data"]
             try:
                 label = np.load(label_path).astype(np.int16)
             except IOError as e:
@@ -749,8 +888,8 @@ class RadarDatasetFolder(data.Dataset):
                 )
 
     def show_image(self, index):
-        data_path = self.files[self.split][index]["data"][0]
-        data_range = self.data_ranges[self.files[self.split][index]["data"][1]]
+        data_path = self.files[self.split][index]["data"]
+        data_range = self.data_ranges[self.files[self.split][index]["range"]]
 
         img = self.load_image(data_path)[data_range]
         img = cv2.resize(img, (0, 0), fx=0.5, fy=0.5)
@@ -759,11 +898,11 @@ class RadarDatasetFolder(data.Dataset):
         cv2.destroyAllWindows()
 
     def show_label(self, index):
-        data_path = self.files[self.split][index]["data"][0]
+        data_path = self.files[self.split][index]["data"]
+        data_range = self.data_ranges[self.files[self.split][index]["range"]]
         label_path = self.files[self.split][index]["label"]
-        data_range = self.data_ranges[self.files[self.split][index]["data"][1]]
 
-        lbl = self.get_label(data_path, label_path)[data_range]
+        lbl = self.get_label(data_path, label_path, index=index)[data_range]
         lbl = cv2.resize(lbl.astype(np.float64), (0, 0), fx=0.5, fy=0.5)  # bug with int types
         lbl = lbl.astype(np.int32)
         lbl_3ch = np.zeros((lbl.shape[0], lbl.shape[1], 3), dtype=np.uint8)
@@ -777,14 +916,14 @@ class RadarDatasetFolder(data.Dataset):
         cv2.destroyAllWindows()
 
     def show_image_with_label(self, index):
-        data_path = self.files[self.split][index]["data"][0]
+        data_path = self.files[self.split][index]["data"]
+        data_range = self.data_ranges[self.files[self.split][index]["range"]]
         label_path = self.files[self.split][index]["label"]
-        data_range = self.data_ranges[self.files[self.split][index]["data"][1]]
 
         img = self.load_image(data_path)[data_range]
         #img = cv2.resize(img, (0, 0), fx=0.5, fy=0.5)
 
-        lbl = self.get_label(data_path, label_path)[data_range]
+        lbl = self.get_label(data_path, label_path, index=index)[data_range]
         #lbl = cv2.resize(lbl.astype(np.float64), (0, 0), fx=0.5, fy=0.5)  # bug with int types
         #lbl = lbl.astype(np.int32)
         lbl_3ch = np.zeros((lbl.shape[0], lbl.shape[1], 3), dtype=np.uint8)
