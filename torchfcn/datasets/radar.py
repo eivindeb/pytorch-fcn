@@ -911,23 +911,18 @@ class RadarDatasetFolder(data.Dataset):
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
-    def show_label(self, index):
-        data_path = self.files[self.split][index]["data"]
-        data_range = self.data_ranges[self.files[self.split][index]["range"]]
-        label_path = self.files[self.split][index]["label"]
+    def show_label(self, index=None, label=None):
+        if index is None and label is None:
+            return
 
-        lbl = self.get_label(data_path, label_path, index=index)[data_range]
-        lbl = cv2.resize(lbl.astype(np.float64), (0, 0), fx=0.5, fy=0.5)  # bug with int types
-        lbl = lbl.astype(np.int32)
-        lbl_3ch = np.zeros((lbl.shape[0], lbl.shape[1], 3), dtype=np.uint8)
-
-        lbl_3ch[:, :, 0] = (lbl == self.LABELS["unlabeled"]) * 255      # B
-        lbl_3ch[:, :, 1] = ((lbl == self.LABELS["land"])) * 255         # G
-        lbl_3ch[:, :, 2] = ((lbl == self.LABELS["unknown"])) * 255      # R
-
-        cv2.imshow("image", lbl_3ch)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        if label is None:
+            data_path = self.files[self.split][index]["data"]
+            data_range = self.data_ranges[self.files[self.split][index]["range"]]
+            label_path = self.files[self.split][index]["label"]
+            label = self.get_label(data_path, label_path, index=index)[data_range]
+        plt.imshow(label)
+        plt.colorbar()
+        plt.show()
 
     def show_image_with_label(self, index):
         data_path = self.files[self.split][index]["data"]
@@ -938,20 +933,11 @@ class RadarDatasetFolder(data.Dataset):
         #img = cv2.resize(img, (0, 0), fx=0.5, fy=0.5)
 
         lbl = self.get_label(data_path, label_path, index=index)[data_range]
-        #lbl = cv2.resize(lbl.astype(np.float64), (0, 0), fx=0.5, fy=0.5)  # bug with int types
-        #lbl = lbl.astype(np.int32)
-        lbl_3ch = np.zeros((lbl.shape[0], lbl.shape[1], 3), dtype=np.uint8)
-
-        lbl_3ch[:, :, 0] = (lbl == self.LABELS["ais"]) * 255  # B
-        lbl_3ch[:, :, 1] = ((lbl == self.LABELS["land"])) * 255  # G
-        lbl_3ch[:, :, 2] = ((lbl == self.LABELS["unknown"])) * 255  # R
-
         f, (ax0, ax1) = plt.subplots(1, 2, subplot_kw={"xticks": [], "yticks": []})
         ax0.imshow(img, cmap=plt.cm.jet)
-        ax1.imshow(lbl_3ch)
+        ax1_im = ax1.imshow(lbl)
+        f.colorbar(ax1_im)
         plt.show()
-
-
 
 if __name__ == "__main__":
     from polarlys.dataloader import DataLoader
