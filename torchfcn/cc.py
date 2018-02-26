@@ -5,6 +5,9 @@ import os.path as osp
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 
+class InvalidClassesError(Exception):
+    pass
+
 def get_f1_score(data, classes, img=None):
     connectivity = 8
     for class_name, settings in classes.items():
@@ -45,11 +48,29 @@ def colorbar(mappable):
     return fig.colorbar(mappable, cax=cax)
 
 
-def classify_chart(data, area_threshold):
+def classify_chart(data, classes, area_threshold):
+    """
+    :param data: Binary data where 1 represents chart data, and 0 background
+    :param classes: The image value of the two classes to classify chart data in [under_threshold, over_threshold]
+    :param area_threshold: Connected component area threshold used to classify chart into classes
+    :return: Data where each 1 in input is classified into(label == 2).astype(np.uint8) one of the two classes
+    """
+    if not isinstance(classes, list) or len(classes) != 2:
+        raise InvalidClassesError
     connectivity = 8
+
+    if data.dtype == np.dtype(np.bool):
+        data = data.astype(np.uint8)
+
+    retval, cc_labels, stats, centroids = get_connected_components(data, connectivity)
+    data = data * classes[0]
+    data[(cc_labels != 0) & (stats[cc_labels][:, :, 4] >= area_threshold)] = classes[1]
+    return data
 
 
 def get_connected_components(data, connectivity):
+    if data.dtype == np.dtype(np.bool):
+        data = data.astype(np.uint8)
     return cv2.connectedComponentsWithStats(data, connectivity)  # index 0 corresponds to background
 
 
@@ -59,7 +80,7 @@ if __name__ == "__main__":
     data_folder = "/nas0"
     if True:
         with open("/home/eivind/Documents/polarlys_datasets/2018/train.txt", "r") as index:
-            lines = index.readlines()
+            lines = index.readlines()[100:]
             land_areas = []
             #area_bins =
             for line_num, line in enumerate(lines):
@@ -68,14 +89,23 @@ if __name__ == "__main__":
                 #data_img = cv2.imread(osp.join(data_folder, rel_path)[:, :2000]
                 retval, cc_labels, stats, centroids = get_connected_components((label == 2).astype(np.uint8), 8)
                 land_areas.extend([stat[4] for i, stat in enumerate(stats) if i != 0])
-                new_label = np.copy(label)
-                new_label[(cc_labels != 0) & (stats[cc_labels][:, :, 4] < 10000)] = 4
-                plot(cc_labels, label=label, img=new_label)
-                if line_num == 5:
+                label_10k = np.copy(label)
+                label_5k = np.copy(label)
+                label_test = np.copy(label)
+                chart_classified = classify_chart((label == 2).astype(np.uint8), [2, 4], 10000)
+                #label_test[chart_classified == 2] = 2
+                #label_test[chart_classified == 4] = 4
+                label_test = np.where(chart_classified != 0, chart_classified, label)
+
+                label_10k[(cc_labels != 0) & (stats[cc_labels][:, :, 4] >= 10000)] = 4
+                label_5k[(cc_labels != 0) & (stats[cc_labels][:, :, 4] >= 5000)] = 4
+                if line_num % 19 == 0 or True:
+                    plot(label_test, label=label_5k, img=label_10k)
+                if line_num == 100:
                     break
-            hist, bins = np.histogram(land_areas)
+            hist, bins = np.histogram(land_areas, bins=[2500, 5000, 10000, 15000, 20000, 25000, 40000, 100000])
             #plt.hist(np.asarray(land_areas), bins="auto")
-            plt.plot(hist, bins[:-1])
+            plt.plot(bins[:-1], hist)
             plt.show()
             print("hei")
     elif False:
