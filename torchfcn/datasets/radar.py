@@ -62,12 +62,11 @@ class RadarDatasetFolder(data.Dataset):
         1,
         5000,
     ])
-
     # mean_bgr = np.array([55.9, 55.9, 56])
     #mean_bgr = np.array([55.1856378125, 55.1856378125, 53.8775])
-    mean_bgr = np.array([55.1856378125])
+    #mean_bgr = np.array([55.1856378125])
     INDEX_FILE_NAME = "{}_{}_{}.txt"
-    LABELS = {"background": 0, "ais": 1, "land": 2, "unknown": 3, "unlabeled": -1}
+    LABELS = {"background": 0, "ais": 1, "land": 2, "unknown": 3, "islet": 4, "unlabeled": -1}
 
     def __init__(self, root, dataset_name, cfg, split='train', transform=False):
         self.root = root
