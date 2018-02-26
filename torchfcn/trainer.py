@@ -260,15 +260,20 @@ class Trainer(object):
                 self.validate()
 
             if self.interval_checkpoint is not None and self.iteration % self.interval_checkpoint == 0 and self.iteration != 0:
-                torch.save({
-                    'out': self.out,
-                    'epoch': self.epoch,
-                    'iteration': self.iteration,
-                    'arch': self.model.__class__.__name__,
-                    'optim_state_dict': self.optim.state_dict(),
-                    'model_state_dict': self.model.state_dict(),
-                    'best_mean_iu': self.best_mean_iu,
-                }, osp.join(self.out, 'checkpoint.pth.tar'))
+                try:
+                    torch.save({
+                        'out': self.out,
+                        'epoch': self.epoch,
+                        'iteration': self.iteration,
+                        'arch': self.model.__class__.__name__,
+                        'optim_state_dict': self.optim.state_dict(),
+                        'model_state_dict': self.model.state_dict(),
+                        'best_mean_iu': self.best_mean_iu,
+                    }, osp.join(self.out, 'checkpoint.pth.tar'))
+                    print("Successfully saved checkpoint at iteration {}".format(self.iteration))
+                except Exception as e:
+                    self.logger.exception("Could not save checkpoint")
+                    print("Could not save checkpoint")
 
             assert self.model.training
 
@@ -340,9 +345,15 @@ class Trainer(object):
                 if self.iteration >= self.max_iter:
                     break
         except RuntimeError as e:
+            print(e)
+            traceback.print_stack()
+            print('--------------')
+            traceback.print_exc()
+            print('--------------')
             self.logger.exception("Runtime Error, likely out of memory.")
             self.restart_script()
         except Exception as e:
+            print(e)
             traceback.print_stack()
             print('--------------')
             traceback.print_exc()
@@ -351,6 +362,7 @@ class Trainer(object):
             self.restart_script()
 
     def restart_script(self, resume=True):
+        print("RESTARTING SCRIPT")
         torch.cuda.empty_cache()
         script_name = sys.argv[0]
         arguments = ["python", script_name]
