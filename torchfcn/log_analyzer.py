@@ -86,7 +86,7 @@ class LogAnalyzer:
 
         plt.plot(x_values, y_values, label="Training")
         if include_validation:
-            plt.plot(valid_x_values, valid_y_values, label="Validation")
+            plt.plot(valid_x_values, valid_y_values, label="Validation", marker="o")
         plt.title(factor)
         plt.legend()
         plt.xlabel(x_axis_scale)
