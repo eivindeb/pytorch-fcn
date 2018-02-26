@@ -20,6 +20,8 @@ import subprocess
 import logging
 import cv2
 from matplotlib import pyplot as plt
+from torchfcn import cc
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 
 """
@@ -106,7 +108,7 @@ class RadarDatasetFolder(data.Dataset):
             exit(0)
 
         self.radar_types = [radar for radar in config["Parameters"].get("RadarTypes", "Radar0,Radar1,Radar2").split(",")]
-        self.filter_land = config["Parameters"].getboolean("FilterLand", False)
+        self.unlabel_chart_data = config["Parameters"].getboolean("UnlabelChartData", False)
         self.remove_hidden_targets = config["Parameters"].getboolean("RemoveHiddenTargets", True)
         self.class_names = np.array([c for c in config["Parameters"].get("Classes", "background,ship").split(",")])
         self.class_weights = np.array([int(weight) for weight in config["Parameters"].get("ClassWeights", "1,5000").split(",")])
@@ -120,6 +122,7 @@ class RadarDatasetFolder(data.Dataset):
         self.image_height = config["Parameters"].getint("ImageHeight", 4096)
         self.land_threshold = config["Parameters"].getint("LandThreshold", 70)
         self.include_weather_data = config["Parameters"].getboolean("IncludeWeatherData", False)
+        self.chart_area_threshold = config["Parameters"].getint("ChartAreaThreshold", 10000)
 
         height_divisons = config["Parameters"].getint("HeightDivisions", 2)
         width_divisons = config["Parameters"].getint("WidthDivisions", 0)
@@ -155,7 +158,7 @@ class RadarDatasetFolder(data.Dataset):
             # check if less than 1 MB is free
             self.max_disk_capacity_reached.append({"status": disk_usage.free < 1e6, "timestamp": datetime.datetime.now()})
 
-        if "land" in self.class_names and self.filter_land:
+        if "land" in self.class_names and self.unlabel_chart_data:
             print("Exiting: Land is both declared as a target and filtered out, please adjust configuration.")
             exit(0)
 
@@ -704,7 +707,7 @@ class RadarDatasetFolder(data.Dataset):
             else:
                 label = ais.astype(np.int32)[:, :self.image_width]
 
-            if "land" in self.class_names or self.filter_land:
+            if "land" in self.class_names or self.unlabel_chart_data:
                 land = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, binary=True, only_first_range_step=True if self.image_width <= 2000 else False)
 
                 if isinstance(land, list):
@@ -718,39 +721,63 @@ class RadarDatasetFolder(data.Dataset):
                 if index is not None:
                     self.files[self.split][index]["label"] = save_path
 
-        if self.remove_hidden_targets or "unknown" in self.class_names:
-            land = (label == self.LABELS["land"])
-            hidden_by_land_mask = np.empty(land.shape, dtype=np.uint8)
-            hidden_by_land_mask[:, 0] = land[:, 0]
-            for col in range(1, land.shape[1]):
-                np.bitwise_or(land[:, col], hidden_by_land_mask[:, col - 1], out=hidden_by_land_mask[:, col])
+        label = label[:self.image_height, :self.image_width]  # TODO: maybe take in data range?
+        # Process label source data
+        if self.unlabel_chart_data:
+            label[label == self.LABELS["land"]] = self.LABELS["unlabeled"]
+        else:
+            chart_data = (label == self.LABELS["land"])
+            chart_classified = cc.classify_chart(chart_data,
+                                                 classes=[self.LABELS["islet"], self.LABELS["land"]],
+                                                 area_threshold=self.chart_area_threshold)
 
-            if self.remove_hidden_targets:
-                if "unknown" in self.class_names:
-                    label[(hidden_by_land_mask == 1) & (label != self.LABELS["land"])] = self.LABELS["unknown"]
+            label[(label == self.LABELS["land"]) | (label == self.LABELS["unknown"])] = self.LABELS["background"]
+
+            if self.remove_hidden_targets or "unknown" in self.class_names:
+                land = chart_classified == self.LABELS["land"]
+                hidden_by_land_mask = np.empty(land.shape, dtype=np.uint8)
+                hidden_by_land_mask[:, 0] = land[:, 0]
+                for col in range(1, land.shape[1]):
+                    np.bitwise_or(land[:, col], hidden_by_land_mask[:, col - 1], out=hidden_by_land_mask[:, col])
+
+                if self.remove_hidden_targets:
+                    if "unknown" in self.class_names:
+                        label[(hidden_by_land_mask == 1) & (chart_classified == 0)] = self.LABELS["unknown"]
+                    else:
+                        label[(hidden_by_land_mask == 1) & (label == self.LABELS["ais"])] = self.LABELS["background"]
                 else:
-                    label[(hidden_by_land_mask == 1) & (label == self.LABELS["ais"])] = self.LABELS["background"]
+                    label[(hidden_by_land_mask == 1) & (chart_classified == 0) & (label != self.LABELS["ais"])] = self.LABELS["unknown"]
+
+
+            if "land" in self.class_names or "islet" in self.class_names:
+                if data is None:
+                    data = self.load_image(data_path)[:label.shape[0], :label.shape[1]]
+                else:
+                    data = data[:label.shape[0], :label.shape[1]]
+
+                chart_classified[(chart_data == 1) & (data < self.land_threshold)] = 0
+
+                # TODO: possible speed up here with np.where or similar?
+                if "islet" in self.class_names and "land" in self.class_names:
+                    label = np.where((chart_classified != 0), chart_classified, label)
+                elif "islet" in self.class_names:
+                    label[chart_classified == self.LABELS["islet"]] = self.LABELS["islet"]
+                else:
+                    label[chart_classified == self.LABELS["land"]] = self.LABELS["land"]
+
+                if "unknown" in self.class_names:
+                    label[(chart_classified == 0) & (chart_data == 1) & (hidden_by_land_mask == 1)] = self.LABELS["unknown"]
+                else:
+                    label[(chart_classified == 0) & (chart_data == 1)] = self.LABELS["background"]
             else:
-                label[(hidden_by_land_mask == 1) & (label != self.LABELS["land"]) & (label != self.LABELS["ais"])] = self.LABELS["unknown"]
+                if "unknown" in self.class_names:
+                    label[(chart_classified != 0) | (label != self.LABELS["unknown"])] = self.LABELS["background"]
+                else:
+                    label[(chart_classified != 0) | (label == self.LABELS["unknown"])] = self.LABELS["background"]
 
         # unlabel data blocked by mast for Radar0
         if "Radar0" in data_path:
             label[2000:2080, :] = self.LABELS["unlabeled"]
-
-        if "land" in self.class_names:
-            if data is None:
-                data = self.load_image(data_path)[:label.shape[0], :label.shape[1]]
-            else:
-                data = data[:label.shape[0], :label.shape[1]]
-
-            # TODO: possible speed up here with np.where or similar?
-            label[(label == self.LABELS["land"]) & (data >= self.land_threshold)] = self.LABELS["land"]
-            label[(label == self.LABELS["land"]) & (data < self.land_threshold)] = self.LABELS["unknown"]
-        else:
-            if self.filter_land:
-                label[(label == self.LABELS["land"]) | (label == self.LABELS["unknown"])] = self.LABELS["unlabeled"]
-            else:
-                label[(label == self.LABELS["land"]) | (label == self.LABELS["unknown"])] = self.LABELS["background"]
 
         return label
 
@@ -785,6 +812,10 @@ class RadarDatasetFolder(data.Dataset):
 
             if "ais" in components:
                 ais = self.data_loader.load_ais_layer_sensor(t, sensor, sensor_index)[:, :self.image_width]
+                if isinstance(ais, list):
+                    self.logger.warning("Label {} not updated.\nAIS data could not be gathered".format(label_path))
+                    processed_labels.append(label_path)
+                    continue
                 label[ais == 1] = self.LABELS["ais"]
             if "chart" in components and "Radar0" in data_path:
                 land = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, binary=True, only_first_range_step=True if self.image_width <= 2000 else False)
@@ -819,7 +850,7 @@ class RadarDatasetFolder(data.Dataset):
                 lines = [data_file + "\n", data_file.replace(".bmp", ".json\n"), data_file.replace(".bmp", ".txt\n")]
                 if self.cache_labels:
                     lines.append(data_file.replace(".bmp", "_label_ship.npy\n"))
-                    if "land" in self.class_names or (self.filter_land and self.remove_hidden_targets):
+                    if "land" in self.class_names or (self.unlabel_chart_data and self.remove_hidden_targets):
                         lines.append(data_file.replace(".bmp", "_label_land.npy\n"))
                     if self.remove_hidden_targets:
                         lines.append(data_file.replace(".bmp", "_label_land_hidden.npy\n"))
@@ -936,8 +967,16 @@ class RadarDatasetFolder(data.Dataset):
         f, (ax0, ax1) = plt.subplots(1, 2, subplot_kw={"xticks": [], "yticks": []})
         ax0.imshow(img, cmap=plt.cm.jet)
         ax1_im = ax1.imshow(lbl)
-        f.colorbar(ax1_im)
+        self._colorbar(ax1_im)
         plt.show()
+
+    def _colorbar(self, mappable):
+        ax = mappable.axes
+        fig = ax.figure
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.05)
+        return fig.colorbar(mappable, cax=cax)
+
 
 if __name__ == "__main__":
     from polarlys.dataloader import DataLoader
