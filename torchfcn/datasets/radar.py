@@ -292,6 +292,13 @@ class RadarDatasetFolder(data.Dataset):
 
         return rel_label_path
 
+    def get_filename(self, index, with_radar=False, with_extension=False):
+        if with_radar:
+            filename = "/".join(self.files[self.split][index]["data"].split("/")[-2:])
+        else:
+            filename = self.files[self.split][index]["data"].split("/")[-1]
+        return filename if with_extension else osp.splitext(filename)[0]
+
     def get_data_path(self, radar_relative_path):
         return osp.join(self.data_folder, radar_relative_path)
 
