@@ -76,6 +76,7 @@ class Trainer(object):
         self.log_headers = [
             'epoch',
             'iteration',
+            'filename',
             'train/loss',
             'train/acc',
             'train/acc_cls',
@@ -199,7 +200,7 @@ class Trainer(object):
                 (datetime.datetime.now(pytz.timezone('Europe/Oslo')) - \
                 self.timestamp_start).total_seconds()
 
-            log = [self.epoch, self.iteration] + [''] * 5 + \
+            log = [self.epoch, self.iteration] + [''] * 6 + \
                   [val_loss] + list(metrics) + [elapsed_time]
             log = map(str, log)
             f.write(','.join(log) + '\n')
@@ -322,7 +323,7 @@ class Trainer(object):
             with open(osp.join(self.out, 'log.csv'), 'a') as f:
                 elapsed_time = (datetime.datetime.now(pytz.timezone('Europe/Oslo')) - self.timestamp_start).total_seconds()
 
-                log = [self.epoch, self.iteration] + [loss.data[0]] + \
+                log = [self.epoch, self.iteration, self.train_loader.dataset.get_filename(batch_idx, with_radar=True)] + [loss.data[0]] + \
                     metrics.tolist() + [''] * 5 + [elapsed_time]
                 log = map(str, log)
                 f.write(','.join(log) + '\n')
