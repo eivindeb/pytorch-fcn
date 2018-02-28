@@ -817,11 +817,13 @@ class RadarDatasetFolder(data.Dataset):
             sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
 
             if "ais" in components:
-                ais = self.data_loader.load_ais_layer_sensor(t, sensor, sensor_index)[:, :self.image_width]
+                ais = self.data_loader.load_ais_layer_sensor(t, sensor, sensor_index)
                 if isinstance(ais, list):
                     self.logger.warning("Label {} not updated.\nAIS data could not be gathered".format(label_path))
                     processed_labels.append(label_path)
                     continue
+                else:
+                    ais = ais[:self.image_height, :self.image_width]
                 label[ais == 1] = self.LABELS["ais"]
             if "chart" in components and "Radar0" in data_path:
                 land = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, binary=True, only_first_range_step=True if self.image_width <= 2000 else False)
