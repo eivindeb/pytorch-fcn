@@ -23,9 +23,12 @@ class LogAnalyzer:
                     if val != "" and val is not None:
                         if key not in self.data:
                             self.data.update({key: []})
+                        if key == "filename":
+                            self.data[key].append(val)
+                            continue
                         if key == "valid/loss":
                             self.data["validation_idxs"].append(i)
-                        if key == "epoch" and int(val) > len(self.data["epoch_idxs"]):
+                        elif key == "epoch" and int(val) > len(self.data["epoch_idxs"]):
                             self.data["epoch_idxs"].append(i - 1)
                         try:
                             self.data[key].append(int(val))
