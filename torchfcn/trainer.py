@@ -164,6 +164,7 @@ class Trainer(object):
                 free_memory(locals())
                 filename = self.val_loader.dataset.files["valid"][batch_idx]["data"][0].split("/")
                 self.logger.warning("Loss was NaN while validating\n:image {}".format(filename))
+                continue
             val_loss += float(loss.data[0]) / len(data)
 
             if self.metadata:
