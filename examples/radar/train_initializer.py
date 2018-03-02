@@ -18,12 +18,12 @@ configurations = {
     # same configuration as original work
     # https://github.com/shelhamer/fcn.berkeleyvision.org
     1: dict(
-        max_iteration=400000,
-        lr=1.0e-10*0.07,  # the standard learning rate for VOC images (500x375) multiplied by ratio of radar dataset image size (1365x2000)
+        max_iteration=800000,
+        lr=5e-11*0.07,  # the standard learning rate for VOC images (500x375) multiplied by ratio of radar dataset image size (1365x2000)
         momentum=0.99,
         weight_decay=0.0005,
-        interval_validate=60000,
-        interval_checkpoint=3000,  # checkpoint every ~1 hour
+        interval_validate=30000,
+        interval_checkpoint=500,  # checkpoint every 10 minutes
         interval_weight_update=10,
     )
 }
@@ -111,7 +111,7 @@ def main():
     data_folder = "/nas0/"
     #data_folder = root
 
-    kwargs = {'num_workers': 0, 'pin_memory': True} if cuda else {}
+    kwargs = {'num_workers': 8, 'pin_memory': True} if cuda else {}
     train_loader = torch.utils.data.DataLoader(
         torchfcn.datasets.RadarDatasetFolder(
             root, split='train', cfg=osp.join(root, "polarlys_cfg.txt"), transform=True, dataset_name="2018"),
@@ -123,9 +123,11 @@ def main():
 
     # 2. model
 
-    #val_loader.dataset.files["valid"] = val_loader.dataset.files["valid"][0:900]
+    #val_loader.dataset.files["valid"] = val_loader.dataset.files["valid"][0:10]
+    #train_loader.dataset.files["train"] = train_loader.dataset.files["train"][0:100]
 
-    model = torchfcn.models.FCN32s(n_class=train_loader.dataset.class_names.size, metadata=train_loader.dataset.include_weather_data)
+    #model = torchfcn.models.FCN32s(n_class=train_loader.dataset.class_names.size, metadata=train_loader.dataset.include_weather_data)
+    model = torchfcn.models.FCN8sAtOnce(n_class=train_loader.dataset.class_names.size, metadata=train_loader.dataset.include_weather_data)
     start_epoch = 0
     start_iteration = 0
     if resume:

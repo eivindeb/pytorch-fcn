@@ -2,6 +2,7 @@ import os.path as osp
 
 import fcn
 import torch.nn as nn
+import math
 
 from .fcn32s import get_upsampling_weight
 
@@ -19,10 +20,13 @@ class FCN8s(nn.Module):
             md5='dbd9bbb3829a3184913bccc74373afbb',
         )
 
-    def __init__(self, n_class=21):
+    def __init__(self, n_class=21, metadata=False):
         super(FCN8s, self).__init__()
+
+        self.metadata = metadata
+
         # conv1
-        self.conv1_1 = nn.Conv2d(3, 64, 3, padding=100)
+        self.conv1_1 = nn.Conv2d(1, 64, 3, padding=100)
         self.relu1_1 = nn.ReLU(inplace=True)
         self.conv1_2 = nn.Conv2d(64, 64, 3, padding=1)
         self.relu1_2 = nn.ReLU(inplace=True)
@@ -263,12 +267,20 @@ class FCN8sAtOnce(FCN8s):
         ]
         for l1, l2 in zip(vgg16.features, features):
             if isinstance(l1, nn.Conv2d) and isinstance(l2, nn.Conv2d):
-                assert l1.weight.size() == l2.weight.size()
-                assert l1.bias.size() == l2.bias.size()
-                l2.weight.data.copy_(l1.weight.data)
-                l2.bias.data.copy_(l1.bias.data)
+                if l1.in_channels != l2.in_channels:  # if grayscale input
+                    n = l2.kernel_size[0] * l2.kernel_size[1] * l2.out_channels
+                    l2.weight.data.normal_(0, math.sqrt(2. / n))
+                else:
+                    assert l1.weight.size() == l2.weight.size()
+                    assert l1.bias.size() == l2.bias.size()
+                    l2.weight.data.copy_(l1.weight.data)
+                    l2.bias.data.copy_(l1.bias.data)
         for i, name in zip([0, 3], ['fc6', 'fc7']):
             l1 = vgg16.classifier[i]
             l2 = getattr(self, name)
-            l2.weight.data.copy_(l1.weight.data.view(l2.weight.size()))
-            l2.bias.data.copy_(l1.bias.data.view(l2.bias.size()))
+            if self.metadata:
+                l2.weight.data.normal_(0, 0.01)
+                l2.bias.data.zero_()
+            else:
+                l2.weight.data.copy_(l1.weight.data.view(l2.weight.size()))
+                l2.bias.data.copy_(l1.bias.data.view(l2.bias.size()))
