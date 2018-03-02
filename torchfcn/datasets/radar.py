@@ -58,15 +58,8 @@ class DataFileNotFound(Exception):
 
 
 class RadarDatasetFolder(data.Dataset):
-    class_weights = np.array([  # based on frequency of targets in data
-        1,
-        5000,
-    ])
-    # mean_bgr = np.array([55.9, 55.9, 56])
-    #mean_bgr = np.array([55.1856378125, 55.1856378125, 53.8775])
-    #mean_bgr = np.array([55.1856378125])
-    INDEX_FILE_NAME = "{}_{}_{}.txt"
-    LABELS = {"background": 0, "ais": 1, "land": 2, "unknown": 3, "islet": 4, "unlabeled": -1}
+    LABEL_SOURCE = {"ais": 1, "chart": 2}
+    LABELS = {"background": 0, "vessel": 1, "land": 2, "unknown": 3, "islet": 4, "unlabeled": -1}
 
     def __init__(self, root, dataset_name, cfg, split='train', transform=False):
         self.root = root
@@ -503,15 +496,16 @@ class RadarDatasetFolder(data.Dataset):
                                     except MaxDiskUsageError:
                                         print("Allowed disk space used up, terminating search.")
                                         self.cache_labels = False
+                                        break
                                     except OSError:
                                         print("No more available disk space, terminating search.")
                                         self.cache_labels = False
+                                        break
                                     except LabelSourceMissing:
                                         processed_files_index.write(
                                             "{};{}\n".format(file, self.ais_targets_to_string(ais_targets)))
                                         continue
-
-                                    if np.any(lbl[:, :self.image_width] == self.LABELS["ais"]):
+                                    if np.any(lbl[:, :self.image_width] == self.LABELS["vessel"]):
                                         processed_files_index.write(
                                             "{};{}\n".format(file, self.ais_targets_to_string(ais_targets)))
                                     else:
@@ -711,16 +705,18 @@ class RadarDatasetFolder(data.Dataset):
                 self.logger.warning("AIS data could not be gathered for {}".format(self.data_path_to_rel_label_path(data_path)))
                 raise LabelSourceMissing
             else:
-                label = ais.astype(np.int32)[:, :self.image_width]
+                label = ais.astype(np.int32)[:self.image_height, :self.image_width] * self.LABEL_SOURCE["ais"]
 
-            if "land" in self.class_names or self.unlabel_chart_data:
-                land = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, binary=True, only_first_range_step=True if self.image_width <= 2000 else False)
+            if not {"land", "islet", "unknown"}.isdisjoint(self.class_names) or self.unlabel_chart_data:
+                chart = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, binary=True, only_first_range_step=True if self.image_width <= 2000 else False)
 
-                if isinstance(land, list):
+                if isinstance(chart, list):
                     self.logger.warning("Chart data could not be gathered for {}".format(self.data_path_to_rel_label_path(data_path)))
                     raise LabelSourceMissing
                 else:
-                    land = land[:self.image_height, :self.image_width]
+                    chart = chart[:self.image_height, :self.image_width]
+
+                lbl[chart == 1] = self.LABEL_SOURCE["chart"]
 
             if cached_label_missing:
                 save_path = self.save_numpy_file(self.data_path_to_rel_label_path(data_path), label.astype(np.int8), throw_exception=throw_save_exception)
@@ -729,14 +725,20 @@ class RadarDatasetFolder(data.Dataset):
 
         label = label[:self.image_height, :self.image_width]  # TODO: maybe take in data range?
         # Process label source data
-        if self.unlabel_chart_data:
-            label[label == self.LABELS["land"]] = self.LABELS["unlabeled"]
+        if "vessel" in self.class_names:
+            label[label == self.LABEL_SOURCE["ais"]] = self.LABELS["vessel"]
         else:
-            chart_data = (label == self.LABELS["land"])
+            label[label == self.LABEL_SOURCE["ais"]] = self.LABELS["background"]
+
+        if self.unlabel_chart_data:
+            label[label == self.LABEL_SOURCE["chart"]] = self.LABELS["unlabeled"]
+        else:
+            chart_data = (label == self.LABEL_SOURCE["chart"])
             chart_classified = cc.classify_chart(chart_data,
                                                  classes=[self.LABELS["islet"], self.LABELS["land"]],
                                                  area_threshold=self.chart_area_threshold)
 
+            # for legacy support
             label[(label == self.LABELS["land"]) | (label == self.LABELS["unknown"])] = self.LABELS["background"]
 
             if self.remove_hidden_targets or "unknown" in self.class_names:
@@ -750,9 +752,9 @@ class RadarDatasetFolder(data.Dataset):
                     if "unknown" in self.class_names:
                         label[(hidden_by_land_mask == 1) & (chart_classified == 0)] = self.LABELS["unknown"]
                     else:
-                        label[(hidden_by_land_mask == 1) & (label == self.LABELS["ais"])] = self.LABELS["background"]
+                        label[(hidden_by_land_mask == 1) & (label == self.LABELS["vessel"])] = self.LABELS["background"]
                 else:
-                    label[(hidden_by_land_mask == 1) & (chart_classified == 0) & (label != self.LABELS["ais"])] = self.LABELS["unknown"]
+                    label[(hidden_by_land_mask == 1) & (chart_classified == 0) & (label != self.LABELS["vessel"])] = self.LABELS["unknown"]
 
 
             if "land" in self.class_names or "islet" in self.class_names:
@@ -788,7 +790,7 @@ class RadarDatasetFolder(data.Dataset):
         return label
 
     def update_cached_labels(self, components):
-        processed_labels = []
+        processed_labels = set()
         for entry in tqdm.tqdm(self.files[self.split], total=len(self.files[self.split]), desc="Updating cached labels", leave=False):
             label_path = self.get_label_path(entry["data"])
             if label_path in processed_labels:
@@ -824,7 +826,7 @@ class RadarDatasetFolder(data.Dataset):
                     continue
                 else:
                     ais = ais[:self.image_height, :self.image_width]
-                label[ais == 1] = self.LABELS["ais"]
+                label[ais == 1] = self.LABEL_SOURCE["ais"]
             if "chart" in components and "Radar0" in data_path:
                 land = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, binary=True, only_first_range_step=True if self.image_width <= 2000 else False)
                 if isinstance(land, list):
@@ -834,10 +836,10 @@ class RadarDatasetFolder(data.Dataset):
                 else:
                     land = land[:self.image_height, :self.image_width]
 
-                label[land == 1] = self.LABELS["land"]
+                label[land == 1] = self.LABEL_SOURCE["chart"]
 
             self.save_numpy_file(label_path, label.astype(np.int8))
-            processed_labels.append(label_path)
+            processed_labels.add(label_path)
 
     def generate_list_of_required_files(self):
         index_file = osp.join(self.dataset_folder, self.split) + ".txt"
