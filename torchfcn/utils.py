@@ -1,6 +1,7 @@
 import numpy as np
 
 
+# confusion matrix !!
 def fast_hist(label_true, label_pred, n_class):
     mask = (label_true >= 0) & (label_true < n_class)
     hist = np.bincount(
