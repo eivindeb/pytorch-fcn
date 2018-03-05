@@ -359,14 +359,7 @@ class RadarDatasetFolder(data.Dataset):
                     print("but is: {}".format(line))
                     exit(0)
 
-                # load image
-                #basename = osp.splitext(filename)[0]
-                #t = self.data_loader.get_time_from_basename(basename)
-                #sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
-
-                #img = self.data_loader.load_image(t, sensor, sensor_index)
-
-                if False and type(img) == list:
+                if False:
                     line = "removed"
                     line_edited = True
                 else:
@@ -995,6 +988,7 @@ class RadarDatasetFolder(data.Dataset):
         self._colorbar(ax1_im)
         plt.show()
 
+
     def _colorbar(self, mappable):
         ax = mappable.axes
         fig = ax.figure
@@ -1007,27 +1001,61 @@ if __name__ == "__main__":
     from polarlys.dataloader import DataLoader
 
     #np.s_[:int(4096/3), 0:2000], np.s_[int(4096/3):int(2*4096/3), 0:2000], np.s_[int(2*4096/3):, 0:2000]
-    dataset = RadarDatasetFolder(root="/home/eivind/Documents/polarlys_datasets", cfg="/home/eivind/Documents/polarlys_datasets/polarlys_cfg.txt", split="train", dataset_name="2018")
+    dataset = RadarDatasetFolder(root="/home/eivind/Documents/polarlys_datasets", cfg="/home/eivind/Documents/polarlys_datasets/polarlys_cfg.txt", split="train", dataset_name="test")
 
+    if False:
+        if False:
+            files = dataset.files[dataset.split]
+            new_files = []
+
+            from_time = datetime.datetime(year=2017, month=10, day=28, hour=4, minute=0, second=0)
+            to_time = datetime.datetime(year=2018, month=10, day=28, hour=7, minute=38, second=53)
+            for file in files:
+                file_time = datetime.datetime.strptime(file["data"].split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S")
+                if from_time <= file_time <= to_time:
+                    new_files.append(file)
+
+            new_files = sorted(new_files, key=lambda x: datetime.datetime.strptime(x["data"].split("/")[-1].replace(".bmp", ""),
+                                                                                  "%Y-%m-%d-%H_%M_%S"))
+            dataset.files[dataset.split] = new_files
+            print("yay")
+        if False:
+            dataset.files["train"] = dataset.files["train"][92693:]
+        dataset.update_cached_labels(("ais", "chart", "unlabeled"))
+        #dataset.update_dataset_file(from_time=datetime.datetime(year=2017, month=11, day=27, hour=20, minute=0))
     if True:
-        files = dataset.files[dataset.split]
-        new_files = []
+        basename = osp.splitext(dataset.files["train"][0]["data"])[0]
+        t = dataset.data_loader.get_time_from_basename(basename)
+        sensor, sensor_index = dataset.data_loader.get_sensor_from_basename(basename)
 
-        from_time = datetime.datetime(year=2017, month=10, day=27, hour=23, minute=51, second=16)
-        to_time = datetime.datetime(year=2017, month=10, day=28, hour=7, minute=38, second=53)
-        for file in files:
-            file_time = datetime.datetime.strptime(file["data"][0].split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S")
-            if from_time <= file_time <= to_time:
-                new_files.append(file)
+        ais_targets = dataset.data_loader.load_ais_targets_sensor(t, sensor, sensor_index)
 
-        dataset.files[dataset.split] = new_files
 
-        dataset.update_cached_labels(("ais", "chart"))
-        dataset.update_dataset_file(from_time=datetime.datetime(year=2017, month=11, day=27, hour=20, minute=0))
+        dataset_collect = RadarDatasetFolder(root="/home/eivind/Documents/polarlys_datasets",
+                                             cfg="/home/eivind/Documents/polarlys_datasets/polarlys_cfg.txt",
+                                             split="train", dataset_name="lacie")
+        dataset_collect.update_dataset_file(from_time=datetime.datetime(year=2017, month=11, day=30, hour=7, minute=38))
     elif False:
-        dataset.update_dataset_file(from_time=datetime.datetime(year=2017, month=11, day=27, hour=20, minute=0))
+        print(dataset.get_mean())
+    elif False:
+        files_to_update = []
+        processed_files = set()
+        for file in tqdm.tqdm(dataset.files["train"], total=len(dataset.files["train"])):
+            if file["data"] in processed_files:
+                continue
+            lbl = np.load(file["label"])
+            if np.any((lbl == 3) | (lbl == -1)):
+                files_to_update.append(file)
+            processed_files.add(file["data"])
+        dataset.files["train"] = files_to_update
+        dataset.update_cached_labels(("ais", "chart", "unlabeled"))
+    elif False:
+        for i in range(len(dataset.files["train"])):
+            dataset.show_image_with_label(i)
+        img, lbl = dataset[0]
 
-    dataset.show_image_with_label(2500)
+    #dataset.redistribute_set_splits([0.97, 0.03, 0])
+    #dataset.show_image_with_label(5000)
     exit(0)
     print("mean: ")
     print(dataset.get_mean())
