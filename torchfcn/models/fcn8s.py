@@ -25,6 +25,16 @@ class FCN8s(nn.Module):
 
         self.metadata = metadata
 
+        if self.metadata:
+            self.m_fc1 = nn.Linear(14, 14)
+            self.m_fc1_relu = nn.ReLU(inplace=True)
+            self.m_fc2 = nn.Linear(14, 14)
+            self.m_fc2_relu = nn.ReLU(inplace=True)
+            self.m_fc3 = nn.Linear(14, 14)
+            self.m_fc3_relu = nn.ReLU(inplace=True)
+            self.m_fc4 = nn.Linear(14, 1)
+            self.m_fc4_relu = nn.ReLU(inplace=True)
+
         # conv1
         self.conv1_1 = nn.Conv2d(1, 64, 3, padding=100)
         self.relu1_1 = nn.ReLU(inplace=True)
@@ -67,7 +77,10 @@ class FCN8s(nn.Module):
         self.pool5 = nn.MaxPool2d(2, stride=2, ceil_mode=True)  # 1/32
 
         # fc6
-        self.fc6 = nn.Conv2d(512, 4096, 7)
+        if self.metadata:
+            self.fc6 = nn.Conv2d(512, 4095, 7)
+        else:
+            self.fc6 = nn.Conv2d(512, 4096, 7)
         self.relu6 = nn.ReLU(inplace=True)
         self.drop6 = nn.Dropout2d()
 
@@ -101,7 +114,7 @@ class FCN8s(nn.Module):
                     m.in_channels, m.out_channels, m.kernel_size[0])
                 m.weight.data.copy_(initial_weight)
 
-    def forward(self, x):
+    def forward(self, x, y=None):
         h = x
         h = self.relu1_1(self.conv1_1(h))
         h = self.relu1_2(self.conv1_2(h))
@@ -186,7 +199,15 @@ class FCN8sAtOnce(FCN8s):
             md5='bfed4437e941fef58932891217fe6464',
         )
 
-    def forward(self, x):
+    def forward(self, x, y=None):
+        if self.metadata:
+            assert y is not None
+            h_y = y
+            h_y = self.m_fc1_relu(self.m_fc1(h_y))
+            h_y = self.m_fc2_relu(self.m_fc2(h_y))
+            h_y = self.m_fc3_relu(self.m_fc3(h_y))
+            h_y = self.m_fc4_relu(self.m_fc4(h_y))
+
         h = x
         h = self.relu1_1(self.conv1_1(h))
         h = self.relu1_2(self.conv1_2(h))
@@ -215,6 +236,12 @@ class FCN8sAtOnce(FCN8s):
 
         h = self.relu6(self.fc6(h))
         h = self.drop6(h)
+
+        if self.metadata:
+            h_y = h_y.repeat(h.shape[2], h.shape[3])
+            h_y = h_y.unsqueeze(0)
+            h_y = h_y.unsqueeze(0)
+            h = h.cat([h, h_y], dim=1)
 
         h = self.relu7(self.fc7(h))
         h = self.drop7(h)
@@ -284,3 +311,9 @@ class FCN8sAtOnce(FCN8s):
             else:
                 l2.weight.data.copy_(l1.weight.data.view(l2.weight.size()))
                 l2.bias.data.copy_(l1.bias.data.view(l2.bias.size()))
+        if self.metadata:
+            for name in ["m_fc1", "m_fc2", "m_fc3", "m_fc4"]:
+                l = getattr(self, name)
+                n = l.in_features
+                l.weight.data.normal_(0, math.sqrt(2. / n))
+                l.bias.data.zero_()
