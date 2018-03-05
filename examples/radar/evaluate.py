@@ -17,12 +17,12 @@ import tqdm
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-model_file', help='Model path')
+    #parser.add_argument('-model_file', help='Model path')
     parser.add_argument('-g', '--gpu', type=int, default=0)
     args = parser.parse_args()
 
     os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu)
-    model_file = args.model_file
+    #model_file = args.model_file
 
     cuda = torch.cuda.is_available()
 
@@ -30,39 +30,27 @@ def main():
     if cuda:
         torch.cuda.manual_seed(1337)
 
-    root = "/data/polarlys"
-    res_root = osp.join(root, "prediction_confidences_10k")
+    root = "/home/eivind/Documents/polarlys_datasets"
+    model_folder = "/home/eivind/Documents/dev/ntnu-project/ml/pytorch-fcn/examples/radar/logs/MODEL-fcn32s_CFG-001_LR-3.5000000000000004e-12_INTERVAL_WEIGHT_UPDATE-10_MOMENTUM-0.99_INTERVAL_VALIDATE-30000_INTERVAL_CHECKPOINT-500_WEIGHT_DECAY-0.0005_MAX_ITERATION-800000_VCS-b'39e5f59'_TIME-20180302-152858"
+    model_file = osp.join(model_folder, "checkpoint.pth.tar")
     data_folder = "/nas0/"
+    results_folder = osp.join(model_folder, "results")
 
 
     kwargs = {'num_workers': 0, 'pin_memory': True} if cuda else {}
     test_loader = torch.utils.data.DataLoader(
-        torchfcn.datasets.RadarShipTargetFilterLandAndHidden(
-            root, data_folder=data_folder, label_folder=osp.join(root, "labels"), split='test', transform=True,
-            cache_labels=True, dataset_name="final", data_ranges=(np.s_[:, 0:2000],), min_data_interval=0, remove_files_without_targets=False),
+        torchfcn.datasets.RadarDatasetFolder(
+            root, split='valid', cfg=osp.join(root, "polarlys_cfg.txt"), transform=True, dataset_name="2018"),
         batch_size=1, shuffle=False, **kwargs)
-
-    #test_loader.dataset.files["test"] = test_loader.dataset.files["test"][0:10]
-
-    processed_files = []
-
-    for i in range(len(test_loader.dataset.files["test"])):
-        file_rel_path = test_loader.dataset.files["test"][i]["data"][0].replace(data_folder, "")
-        save_location = osp.join(res_root, file_rel_path).replace(".bmp", "_confidence.npy")
-
-        if osp.exists(save_location):
-            processed_files.append(i)
-
-    test_loader.dataset.files["test"] = [file for i, file in enumerate(test_loader.dataset.files["test"]) if i not in processed_files]
 
     n_class = len(test_loader.dataset.class_names)
 
-    if osp.basename(model_file).startswith('fcn32s') or True:
+    if osp.basename(model_file).startswith('fcn32s') or False:
         model = torchfcn.models.FCN32s(n_class=n_class)
     elif osp.basename(model_file).startswith('fcn16s'):
         model = torchfcn.models.FCN16s(n_class=n_class)
-    elif osp.basename(model_file).startswith('fcn8s'):
-        if osp.basename(model_file).startswith('fcn8s-atonce'):
+    elif osp.basename(model_file).startswith('fcn8s') or True:
+        if osp.basename(model_file).startswith('fcn8s-atonce') or True:
             model = torchfcn.models.FCN8sAtOnce(n_class=n_class)
         else:
             model = torchfcn.models.FCN8s(n_class=n_class)
@@ -105,14 +93,15 @@ def main():
         #            label_names=test_loader.dataset.class_names)
         #        visualizations.append(viz)
 
-        confidence_ship = torch.nn.functional.softmax(score.data[0]).data[1].cpu().numpy()
+        lbl_pred = score.data.max(1)[1].cpu().numpy()[:, :, :]
+        #confidence_ship = torch.nn.functional.softmax(score.data[0]).data[1].cpu().numpy()
 
-        file_rel_path = test_loader.dataset.files["test"][batch_idx]["data"][0].replace(data_folder, "")
-        save_location = osp.join(res_root, file_rel_path).replace(".bmp", "_confidence")
+        filename = test_loader.dataset.get_filename(batch_idx, with_radar=True)
+        save_location = osp.join(results_folder, filename)
         if not osp.exists(osp.dirname(save_location)):
             os.makedirs(osp.dirname(save_location))
 
-        np.save(save_location, confidence_ship)
+        np.save(save_location, lbl_pred)
 
         del score  # free up memory
         del target
