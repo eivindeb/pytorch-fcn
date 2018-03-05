@@ -232,7 +232,11 @@ class RadarDatasetFolder(data.Dataset):
                 img_image = np.expand_dims(img_image, axis=0)
                 img_image = torch.from_numpy(img_image).float()
                 lbl = torch.from_numpy(lbl).long()
-                img_weather = torch.from_numpy(np.asarray([val for val in img["metadata"].values()])).float()  # TODO: ensure always same order
+                try:
+                    img_weather = torch.from_numpy(np.asarray([val for key, val in sorted(img["metadata"].items())])).float()
+                except RuntimeError:  # no metadata?
+                    self.logger.exception("Runtime error when processing metadata")
+                    img_weather = torch.zeros(14).float()
                 img["image"] = img_image
                 img["metadata"] = img_weather
             else:
@@ -242,11 +246,21 @@ class RadarDatasetFolder(data.Dataset):
         return img, lbl
 
     def untransform(self, img, lbl):
-        img = img.numpy()
-        img = np.squeeze(img, axis=0)
-        img += self.mean_bgr
-        img = img.astype(np.uint8)
-        lbl = lbl.numpy()
+        try:
+            img = img.numpy()
+            img = np.squeeze(img, axis=0)
+            img += self.mean_bgr
+            img = img.astype(np.uint8)
+            lbl = lbl.numpy()
+        except Exception as e:
+            if isinstance(img, dict):
+                img_image = img["image"].numpy()
+                img_image = np.squeeze(img_image, axis=0)
+                img_image += self.mean_bgr
+                img_image = img_image.astype(np.uint8)
+                img_metadata = img["metadata"].numpy()
+                img = {"image": img_image, "metadata": img_metadata}
+                lbl = lbl.numpy()
         return img, lbl
 
     def load_image(self, data_path):
