@@ -174,6 +174,7 @@ class RadarDatasetFolder(data.Dataset):
             self.read_dataset_stats_from_file()
         except (IOError, MissingStatsError) as e:
             print(e)
+            self.mean_bgr = np.array([59.06010940426199])
             #self.calculate_dataset_stats()
 
     def __len__(self):
