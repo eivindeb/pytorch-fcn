@@ -73,6 +73,9 @@ class Trainer(object):
         if not osp.exists(self.out):
             os.makedirs(self.out)
 
+        self.n_class = len(self.val_loader.dataset.class_names)
+        class_names = self.val_loader.dataset.class_names[1:]
+
         self.log_headers = [
             'epoch',
             'iteration',
@@ -86,9 +89,18 @@ class Trainer(object):
             'valid/acc',
             'valid/acc_cls',
             'valid/mean_iu',
+            'valid/mean_bj'
             'valid/fwavacc',
             'elapsed_time',
         ]
+
+        for metric in ["valid/acc_cls", "valid/mean_iu", "valid/mean_bj"]:
+            metric_index = self.log_headers.index(metric)
+            if "mean" in metric:
+                metric = metric.replace("mean_", "")
+            class_headers = ["{}_{}".format(metric, class_name) for class_name in class_names]
+            self.log_headers[metric_index:metric_index] = class_headers
+
         if not osp.exists(osp.join(self.out, 'log.csv')):
             with open(osp.join(self.out, 'log.csv'), 'w') as f:
                 f.write(','.join(self.log_headers) + '\n')
@@ -127,14 +139,14 @@ class Trainer(object):
         training = self.model.training
         self.model.eval()
 
-        n_class = len(self.val_loader.dataset.class_names)
-
         val_loss = 0
         visualizations = []
 
         crash_batch_idx = -2
 
-        hist = np.zeros((n_class, n_class))
+        num_of_valid_metrics = sum(1 if "valid" in header else 0 for header in self.log_headers)
+        metrics = np.zeros((len(self.val_loader), num_of_valid_metrics))
+        hist = np.zeros((self.n_class, self.n_class))
         for batch_idx, (data, target) in tqdm.tqdm(
                 enumerate(self.val_loader), total=len(self.val_loader),
                 desc='Valid iteration=%d' % self.iteration, ncols=80,
@@ -174,19 +186,21 @@ class Trainer(object):
             lbl_pred = score.data.max(1)[1].cpu().numpy()[:, :, :]
             lbl_true = target.data.cpu()
 
-            for img, lt, lp in zip(imgs, lbl_true, lbl_pred):
-                if len(visualizations) < 9:
+            if len(visualizations) < 9:
+                for img, lt, lp in zip(imgs, lbl_true, lbl_pred):
                     img, lt = self.val_loader.dataset.untransform(img, lt)
                     if len(img.shape) == 2:
                         img = np.repeat(img[:, :, np.newaxis], 3, 2)
                     viz = fcn.utils.visualize_segmentation(
-                        lbl_pred=lp, lbl_true=lt, img=img, n_class=n_class)
+                        lbl_pred=lp, lbl_true=lt, img=img, n_class=self.n_class)
                     visualizations.append(viz)
-                    hist += torchfcn.utils.fast_hist(lt.flatten(), lp.flatten(), n_class)
-                else:
-                    hist += torchfcn.utils.fast_hist(lt.numpy().flatten(), lp.flatten(), n_class)
 
-        metrics = torchfcn.utils.label_accuracy_score_from_hist(hist)
+            batch_metrics = torchfcn.utils.label_accuracy_score(lbl_true.numpy(), lbl_pred, self.n_class)
+            metrics[batch_idx, 0] = batch_metrics[0]
+            metrics[batch_idx, 1:self.n_class + 1] = batch_metrics[1]
+            metrics[batch_idx, self.n_class + 1] = batch_metrics[2]
+            metrics[batch_idx, self.n_class + 2: 2*self.n_class + 2] = batch_metrics[3]
+            metrics[batch_idx, 2*self.n_class + 2:] = batch_metrics[4:]
 
         out = osp.join(self.out, 'visualization_viz')
         if not osp.exists(out):
@@ -199,14 +213,21 @@ class Trainer(object):
         with open(osp.join(self.out, 'log.csv'), 'a') as f:
             elapsed_time = \
                 (datetime.datetime.now(pytz.timezone('Europe/Oslo')) - \
-                self.timestamp_start).total_seconds()
+                 self.timestamp_start).total_seconds()
+
+            for batch_idx in range(metrics.shape[0]):
+                log = [self.epoch, self.iteration, self.val_loader.dataset.get_filename(batch_idx, with_radar=True)] + [''] * 5 + \
+                      [""] + list(metrics[batch_idx, :]) + [""]
+                log = map(str, log)
+                f.write(','.join(log) + '\n')
 
             log = [self.epoch, self.iteration] + [''] * 6 + \
-                  [val_loss] + list(metrics) + [elapsed_time]
+                      [val_loss] + list(np.nanmean(metrics, axis=1)) + [elapsed_time]
+
             log = map(str, log)
             f.write(','.join(log) + '\n')
 
-        mean_iu = metrics[2]
+        mean_iu = np.nanmean(metrics[:, -2])
         is_best = mean_iu > self.best_mean_iu
         if is_best:
             self.best_mean_iu = mean_iu
