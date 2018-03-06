@@ -86,39 +86,47 @@ def boundary(data, data_pred, classes=None):
 
     bjs = []
     for class_val in classes:
-        boundary_pred = segmentation.find_boundaries(data_pred == class_val, connectivity=1, mode="inner", background=0)
-        boundary_pred_length = np.count_nonzero(boundary_pred)
-        boundary_label = segmentation.find_boundaries(data == class_val, connectivity=1, mode="inner", background=0)
-        boundary_label_length = np.count_nonzero(boundary_label)
-        if boundary_pred_length > 0 and boundary_label_length > 0:
+        class_gt = data == class_val
+        class_pred = data_pred == class_val
+        if np.any(class_gt) and np.any(class_pred):
+            boundary_pred = segmentation.find_boundaries(class_pred, connectivity=1, mode="inner", background=0)
+            boundary_pred_length = np.count_nonzero(boundary_pred)
+
+            boundary_label = segmentation.find_boundaries(class_gt, connectivity=1, mode="inner", background=0)
+            boundary_label_length = np.count_nonzero(boundary_label)
+
             boundary_label_coords = np.transpose(np.where(boundary_label))
             boundary_pred_coords = np.transpose(np.where(boundary_pred))
+
             non_overlapping_pred_coords = np.transpose(np.where((boundary_pred) & (data != class_val)))
             non_overlapping_label_coords = np.transpose(np.where((boundary_label) & (data_pred != class_val)))
 
             # First calculate true positives for prediction to label
             mytree = spatial.cKDTree(boundary_label_coords)
             TP_p = boundary_pred_length - non_overlapping_pred_coords.shape[0]
-            for point in non_overlapping_pred_coords:
-                dist, idx = mytree.query(point, distance_upper_bound=theta)
-                if dist < theta:
-                    TP_p += 1 - (dist/theta) ** 2
+            dists, idxs = mytree.query(non_overlapping_pred_coords, distance_upper_bound=theta)
+            dists = np.where(dists < theta, 1 - (dists/theta) ** 2, 0)
+            TP_p += np.sum(dists)
             FN = boundary_pred_length - TP_p
 
             # Then for label to prediction
             mytree = spatial.cKDTree(boundary_pred_coords)
             TP_gt = boundary_label_length - non_overlapping_label_coords.shape[0]
-            for point in non_overlapping_label_coords:
-                dist, idx = mytree.query(point, distance_upper_bound=theta)
-                if dist < theta:
-                    TP_gt += 1 - (dist/theta) ** 2
+
+            dists, idxs = mytree.query(non_overlapping_label_coords, distance_upper_bound=theta)
+            dists = np.where(dists < theta, 1 - (dists / theta) ** 2, 0)
+            TP_gt += np.sum(dists)
+
             FP = boundary_label_length - TP_gt
 
             TP = TP_gt + TP_p
 
             bjs.append(TP / (TP + FP + FN))
         else:
-            bjs.append(0)
+            if not np.any(class_gt) and not np.any(class_pred):
+                bjs.append("N/A")
+            else:
+                bjs.append(0)
 
     return bjs
 
