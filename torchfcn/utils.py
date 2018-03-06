@@ -1,5 +1,7 @@
 import numpy as np
-
+import math
+import skimage.segmentation
+import scipy.spatial
 
 # confusion matrix !!
 def fast_hist(label_true, label_pred, n_class):
@@ -47,3 +49,56 @@ def label_accuracy_score_from_hist(hist):
     freq = hist.sum(axis=1) / hist.sum()
     fwavacc = (freq[freq > 0] * iu[freq > 0]).sum()
     return acc, acc_cls, mean_iu, fwavacc
+
+
+def boundary_jaccard(lbl_true, lbl_pred, classes=None):
+    if classes is None:
+        classes = range(1, lbl_true.max() + 1 if lbl_true.max() >= lbl_pred.max() else lbl_pred.max() + 1)
+    theta = math.sqrt(lbl_true.shape[0] ** 2 + lbl_true.shape[1] ** 2) * 0.0075
+
+    bjs = []
+    for class_val in classes:
+        class_gt = lbl_true == class_val
+        class_pred = lbl_pred == class_val
+        if np.any(class_gt) and np.any(class_pred):
+            boundary_pred = skimage.segmentation.find_boundaries(class_pred, connectivity=1, mode="inner", background=0)
+            boundary_pred_length = np.count_nonzero(boundary_pred)
+
+            boundary_label = skimage.segmentation.find_boundaries(class_gt, connectivity=1, mode="inner", background=0)
+            boundary_label_length = np.count_nonzero(boundary_label)
+
+            boundary_label_coords = np.transpose(np.where(boundary_label))
+            boundary_pred_coords = np.transpose(np.where(boundary_pred))
+
+            non_overlapping_pred_coords = np.transpose(np.where((boundary_pred) & (lbl_true != class_val)))
+            non_overlapping_label_coords = np.transpose(np.where((boundary_label) & (lbl_pred != class_val)))
+
+            # First calculate true positives for prediction to label
+            mytree = scipy.spatial.cKDTree(boundary_label_coords)
+            TP_p = boundary_pred_length - non_overlapping_pred_coords.shape[0]
+            dists, idxs = mytree.query(non_overlapping_pred_coords, distance_upper_bound=theta)
+            dists = np.where(dists < theta, 1 - (dists/theta) ** 2, 0)
+            TP_p += np.sum(dists)
+            FN = boundary_pred_length - TP_p
+
+            # Then for label to prediction
+            mytree = scipy.spatial.cKDTree(boundary_pred_coords)
+            TP_gt = boundary_label_length - non_overlapping_label_coords.shape[0]
+
+            dists, idxs = mytree.query(non_overlapping_label_coords, distance_upper_bound=theta)
+            dists = np.where(dists < theta, 1 - (dists / theta) ** 2, 0)
+            TP_gt += np.sum(dists)
+
+            FP = boundary_label_length - TP_gt
+
+            TP = TP_gt + TP_p
+
+            bjs.append(TP / (TP + FP + FN))
+        else:
+            if not np.any(class_gt) and not np.any(class_pred):
+                bjs.append("N/A")
+            else:
+                bjs.append(0)
+
+    bjs.append(np.nanmean(bjs))
+    return bjs

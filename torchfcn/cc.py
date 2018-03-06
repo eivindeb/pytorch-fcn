@@ -79,54 +79,34 @@ def get_connected_components(data, connectivity):
     return cv2.connectedComponentsWithStats(data, connectivity)  # index 0 corresponds to background
 
 
-def boundary(data, data_pred, classes=None):
-    if classes is None:
-        classes = range(1, data.max() + 1 if data.max() >= data_pred.max() else data_pred.max() + 1)
-    theta = math.sqrt(data.shape[0] ** 2 + data.shape[1] ** 2) * 0.0075
+def process_label(data, lbl):
+    # Process lbl source data
+    lbl[lbl == 1] = 1
 
-    bjs = []
-    for class_val in classes:
-        class_gt = data == class_val
-        class_pred = data_pred == class_val
-        if np.any(class_gt) and np.any(class_pred):
-            boundary_pred = segmentation.find_boundaries(class_pred, connectivity=1, mode="inner", background=0)
-            boundary_pred_length = np.count_nonzero(boundary_pred)
+    chart_data = (lbl == 2)
+    chart_classified = classify_chart(chart_data,
+                                         classes=[4, 2],
+                                         area_threshold=10000)
 
-            boundary_label = segmentation.find_boundaries(class_gt, connectivity=1, mode="inner", background=0)
-            boundary_label_length = np.count_nonzero(boundary_label)
+    label[(label == 2) | (label == 3)] = 0
 
-            boundary_label_coords = np.transpose(np.where(boundary_label))
-            boundary_pred_coords = np.transpose(np.where(boundary_pred))
+    land = chart_classified == 2
+    hidden_by_land_mask = np.empty(land.shape, dtype=np.uint8)
+    hidden_by_land_mask[:, 0] = land[:, 0]
+    for col in range(1, land.shape[1]):
+        np.bitwise_or(land[:, col], hidden_by_land_mask[:, col - 1], out=hidden_by_land_mask[:, col])
 
-            non_overlapping_pred_coords = np.transpose(np.where((boundary_pred) & (data != class_val)))
-            non_overlapping_label_coords = np.transpose(np.where((boundary_label) & (data_pred != class_val)))
+    lbl[(hidden_by_land_mask == 1) & (chart_classified == 0)] = 3
 
-            # First calculate true positives for prediction to label
-            mytree = spatial.cKDTree(boundary_label_coords)
-            TP_p = boundary_pred_length - non_overlapping_pred_coords.shape[0]
-            dists, idxs = mytree.query(non_overlapping_pred_coords, distance_upper_bound=theta)
-            dists = np.where(dists < theta, 1 - (dists/theta) ** 2, 0)
-            TP_p += np.sum(dists)
-            FN = boundary_pred_length - TP_p
+    data = data[:lbl.shape[0], :lbl.shape[1]]
 
-            # Then for label to prediction
-            mytree = spatial.cKDTree(boundary_pred_coords)
-            TP_gt = boundary_label_length - non_overlapping_label_coords.shape[0]
+    chart_classified[(chart_data == 1) & (data < 70)] = 0
 
-            dists, idxs = mytree.query(non_overlapping_label_coords, distance_upper_bound=theta)
-            dists = np.where(dists < theta, 1 - (dists / theta) ** 2, 0)
-            TP_gt += np.sum(dists)
+    lbl = np.where((chart_classified != 0), chart_classified, lbl)
 
-            FP = boundary_label_length - TP_gt
+    lbl[(chart_classified == 0) & (chart_data == 1) & (hidden_by_land_mask == 1)] = 3
 
-            TP = TP_gt + TP_p
-
-            bjs.append(TP / (TP + FP + FN))
-        else:
-            if not np.any(class_gt) and not np.any(class_pred):
-                bjs.append("N/A")
-            else:
-                bjs.append(0)
+    return lbl
 
     return bjs
 
