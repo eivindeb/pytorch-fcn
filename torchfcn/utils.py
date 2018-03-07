@@ -51,12 +51,20 @@ def label_accuracy_score_from_hist(hist):
     mean_iu = np.nanmean(iu)
     freq = hist.sum(axis=1) / hist.sum()
     fwavacc = (freq[freq > 0] * iu[freq > 0]).sum()
-    return acc, acc_cls, mean_iu, fwavacc
+    return acc, acc_cls, fwavacc, mean_iu
 
 
 def boundary_jaccard(lbl_true, lbl_pred, classes=None):
+    if len(lbl_true.shape) == 3:
+        if lbl_true.shape[0] != 1:
+            print("Calculation of boundary jaccard index with batch size larger than 1 not implemented")
+            raise NotImplementedError
+        else:
+            lbl_true = lbl_true[0, :, :]
+            lbl_pred = lbl_pred[0, :, :]
+
     if classes is None:
-        classes = range(1, lbl_true.max() + 1 if lbl_true.max() >= lbl_pred.max() else lbl_pred.max() + 1)
+        classes = range(lbl_true.max() + 1 if lbl_true.max() >= lbl_pred.max() else lbl_pred.max() + 1)
     theta = math.sqrt(lbl_true.shape[0] ** 2 + lbl_true.shape[1] ** 2) * 0.0075
 
     bjs = []
@@ -67,8 +75,20 @@ def boundary_jaccard(lbl_true, lbl_pred, classes=None):
             boundary_pred = skimage.segmentation.find_boundaries(class_pred, connectivity=1, mode="inner", background=0)
             boundary_pred_length = np.count_nonzero(boundary_pred)
 
+            if boundary_pred_length == 0:  # entire label is class, therefore no boundary
+                boundary_pred = np.ones((boundary_pred.shape))
+                boundary_pred[1:-1, 1:-1] = 0
+                boundary_pred = boundary_pred.astype(np.bool)
+                boundary_pred_length = np.count_nonzero(boundary_pred)
+
             boundary_label = skimage.segmentation.find_boundaries(class_gt, connectivity=1, mode="inner", background=0)
             boundary_label_length = np.count_nonzero(boundary_label)
+
+            if boundary_label_length == 0:
+                boundary_label = np.ones((boundary_label.shape))
+                boundary_label[1:-1, 1:-1] = 0
+                boundary_label = boundary_label.astype(np.bool)
+                boundary_label_length = np.count_nonzero(boundary_label)
 
             boundary_label_coords = np.transpose(np.where(boundary_label))
             boundary_pred_coords = np.transpose(np.where(boundary_pred))
