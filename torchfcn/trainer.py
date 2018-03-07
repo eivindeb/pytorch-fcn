@@ -114,7 +114,7 @@ class Trainer(object):
         self.epoch = 0
         self.iteration = 0
         self.max_iter = max_iter
-        self.best_mean_iu = 0
+        self.best_mean_bj = 0
 
         self.metadata = getattr(model, "metadata", False)
 
@@ -225,10 +225,10 @@ class Trainer(object):
             log = map(str, log)
             f.write(','.join(log) + '\n')
 
-        mean_iu = np.nanmean(metrics[:, -1])
-        is_best = mean_iu > self.best_mean_iu
+        mean_bj = np.nanmean(metrics[:, -1])
+        is_best = mean_bj > self.best_mean_bj
         if is_best:
-            self.best_mean_iu = mean_iu
+            self.best_mean_bj = mean_bj
         torch.save({
             'out': self.out,
             'epoch': self.epoch,
@@ -236,7 +236,7 @@ class Trainer(object):
             'arch': self.model.__class__.__name__,
             'optim_state_dict': self.optim.state_dict(),
             'model_state_dict': self.model.state_dict(),
-            'best_mean_iu': self.best_mean_iu,
+            'best_mean_bj': self.best_mean_bj,
         }, osp.join(self.out, 'checkpoint.pth.tar'))
         if is_best:
             shutil.copy(osp.join(self.out, 'checkpoint.pth.tar'),
@@ -288,7 +288,7 @@ class Trainer(object):
                         'arch': self.model.__class__.__name__,
                         'optim_state_dict': self.optim.state_dict(),
                         'model_state_dict': self.model.state_dict(),
-                        'best_mean_iu': self.best_mean_iu,
+                        'best_mean_bj': self.best_mean_bj,
                     }, osp.join(self.out, 'checkpoint.pth.tar'))
                     print("Successfully saved checkpoint at iteration {}".format(self.iteration))
                 except Exception as e:
