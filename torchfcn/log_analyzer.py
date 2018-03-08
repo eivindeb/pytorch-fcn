@@ -59,56 +59,91 @@ class LogAnalyzer:
                 self.data["valid"][-1]["mean"] = {key: val.pop() for key, val in self.data["valid"][-1]["data"].items() if key != "filename"}
                 self.data["valid"][-1]["end_time"] = float(row["elapsed_time"])
 
-        self.data = {key: np.asarray(data_list) for key, data_list in self.data.items()}
+    def validation_metric_histogram(self, metric, validation_idx=-1):
+        data = self.data["valid"][validation_idx]["data"]["valid/{}".format(metric)]
+        plt.hist(data, bins=100)
+        plt.title("Histogram for metric {} in validation {}".format(metric, validation_idx))
+        plt.show()
 
-    def graph_factor(self, factor, x_axis_scale="epoch", include_validation=False, iteration_window=0, reject_outliers=True):
-        if "train/{}".format(factor) not in self.data:
-            raise UnexpectedFactor
-        data = self.data["train/{}".format(factor)]
+    def get_low_scoring_files(self, metric, percentile=1, validation_idx=-1):
+        data = np.asarray(self.data["valid"][validation_idx]["data"]["valid/{}".format(metric)])
+        N = int(data.size * percentile / 100)
+        res = np.argsort(-data)[:N]
+        return [self.data["valid"][-1]["data"]["filename"][i] for i in res]
+
+
+    def graph_factor(self, factor, x_axis_scale="iteration", include_validation=False, per_class=False, iteration_window=0, reject_outliers=True):
+        train_factor = "train/{}".format(factor)
+        include_training = any(train_factor in d["data"] for d in self.data["train"])
         if include_validation:
-            try:
-                valid_data = self.data["valid/{}".format(factor)]
-                valid_y_values = []
-                valid_x_values = []
-                validation_idxs = self.data["validation_idxs"]
-            except KeyError:
-                print("No validation data in log")
+            valid_factor = "valid/{}".format(factor)
+            if not any([valid_factor in d["data"] or valid_factor in d["mean"] for d in self.data["valid"]]):
+                print("No validation data available for requested factor")
                 include_validation = False
+            else:
+                if per_class:
+                    base_factor = valid_factor.replace("mean_", "")
+                    valid_factors = [f for f in self.data["valid"][-1]["mean"] if base_factor in f]
+                    valid_y_values = {f: [] for f in valid_factors}
+                else:
+                    valid_y_values = []
+                valid_x_values = []
+        if not include_validation and not include_training:
+            print("No data available for requested factor")
+            raise UnexpectedFactor
 
         if x_axis_scale == "epoch":
-            x_values = range(len(self.data["epoch_idxs"]))
+            x_values = range(len(self.data["train"]))
             y_values = []
-            for i, epoch_end in enumerate(self.data["epoch_idxs"]):
-                epoch_start = 0 if i == 0 else self.data["epoch_idxs"][i-1]
+            for i, epoch in enumerate(self.data["train"]):
                 if include_validation:
-                    validation_idxs_in_epoch = np.argwhere((epoch_start <= validation_idxs) & (validation_idxs <= epoch_end))
-                    if validation_idxs_in_epoch.size > 0:
-                        if validation_idxs_in_epoch.size == 1:
-                            valid_y_values.append(valid_data[validation_idxs_in_epoch[0][0]])
-                        else:
-                            valid_y_values.append(np.average(valid_data[validation_idxs_in_epoch[0]:validation_idxs_in_epoch[-1]]))
+                    if per_class:
+                        for f in valid_factors:
+                            valid_epoch_data = [data["mean"][f] if f in data["mean"] else 0 for data in self.data["valid"] if data["epoch"] == i]
+                            if len(valid_epoch_data) > 0:
+                                valid_y_values[f].append(np.average(valid_epoch_data))
                         valid_x_values.append(i)
-                y_values.append(np.average(data[epoch_start: epoch_end]))
+                    else:
+                        valid_epoch_data = [data["mean"][valid_factor] for data in self.data["valid"] if data["epoch"] == i]  # last or average?
+                        if len(valid_epoch_data) > 0:
+                            valid_y_values.append(np.average(valid_epoch_data))
+                            valid_x_values.append(i)
+                if include_training:
+                    y_values.append(np.mean(epoch["data"][train_factor]))
 
         elif x_axis_scale == "iteration":
-            if iteration_window != 0:
-                y_values = np.convolve(data, np.ones((iteration_window,))/iteration_window, mode="valid")
-            else:
-                y_values = data
+            if include_training:
+                data = []
+                for d in self.data["train"]:
+                    data.extend(d["data"][train_factor])
 
-            if reject_outliers:
-                d = np.abs(y_values - np.median(y_values))
-                mdev = np.median(d)
-                s = d/mdev if mdev else 0
-                y_values = y_values[s < 10]
-            x_values = range(len(y_values))
+                if iteration_window != 0:
+                    y_values = np.convolve(data, np.ones((iteration_window,))/iteration_window, mode="valid")
+                else:
+                    y_values = data
+
+                if reject_outliers:
+                    d = np.abs(y_values - np.median(y_values))
+                    mdev = np.median(d)
+                    s = d/mdev if mdev else 0
+                    y_values = y_values[s < 10]
+                x_values = range(len(y_values))
             if include_validation:
-                valid_y_values = valid_data
-                valid_x_values = validation_idxs
+                if per_class:
+                    for f in valid_factors:
+                        valid_y_values[f] = [d["mean"][f] if f in d["mean"] else 0 for d in self.data["valid"]]
+                else:
+                    valid_y_values = [d["mean"][valid_factor] for d in self.data["valid"]]
+                valid_x_values = [d["iteration"] for d in self.data["valid"]]
 
-        plt.plot(x_values, y_values, label="Training")
+        if include_training:
+            plt.plot(x_values, y_values, label="Training")
         if include_validation:
-            plt.plot(valid_x_values, valid_y_values, label="Validation", marker="o")
+            if per_class:
+                for f in valid_factors:
+                    plt.plot(valid_x_values, valid_y_values[f], label=f, marker="o")
+            else:
+                plt.plot(valid_x_values, valid_y_values, label="Validation", marker="o")
         plt.title(factor)
         plt.legend()
         plt.xlabel(x_axis_scale)
