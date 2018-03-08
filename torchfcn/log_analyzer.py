@@ -16,29 +16,45 @@ class LogAnalyzer:
     def read_log_data(self):
         with open(self.log_path, 'r') as log:
             reader = csv.DictReader(log)
-            self.data = {"epoch_idxs": [], "validation_idxs": []}
+            self.data = {"train": [{"data": {}}], "valid": []}
+
+            is_validation = False
 
             for i, row in enumerate(reader):
+                if int(row["epoch"]) > len(self.data["train"]) - 1:
+                    self.data["train"].append({"data": {}})
                 for key, val in row.items():
                     if val != "" and val is not None:
-                        if key not in self.data:
-                            self.data.update({key: []})
-                        if key == "filename":
-                            self.data[key].append(val)
+                        if "train" in key and is_validation:
+                            is_validation = False
+                            self.data["valid"][-1]["mean"] = {key: val.pop() for key, val in self.data["valid"][-1]["data"].items() if key != "filename"}
+                            self.data["valid"][-1]["end_time"] = float(row["elapsed_time"])
+                        elif "valid" in key and not is_validation:
+                            is_validation = True
+                            self.data["valid"].append({"data": {}, "epoch": int(row["epoch"]), "iteration": int(row["iteration"]), "start_time": self.data["train"][-1]["data"]["elapsed_time"][-1], "end_time": None})
+                        if key in {"iteration", "epoch"}:
                             continue
-                        if key == "valid/loss":
-                            self.data["validation_idxs"].append(i)
-                        elif key == "epoch" and int(val) > len(self.data["epoch_idxs"]):
-                            self.data["epoch_idxs"].append(i - 1)
-                        try:
-                            self.data[key].append(int(val))
-                        except ValueError:
-                            try:
-                                self.data[key].append(float(val))
-                            except ValueError:
-                                raise ValueError
-                        except TypeError:
-                            continue
+                        else:
+                            if key != "filename":
+                                try:
+                                    val = int(val)
+                                except ValueError:
+                                    try:
+                                        val = float(val)
+                                    except ValueError:
+                                        raise ValueError
+                                except TypeError:  # what case is this?
+                                    continue
+
+                            row_cat = "valid" if is_validation else "train"
+                            if key not in self.data[row_cat][-1]["data"]:
+                                self.data[row_cat][-1]["data"].update({key: []})
+
+                            self.data[row_cat][-1]["data"][key].append(val)
+
+            if is_validation:
+                self.data["valid"][-1]["mean"] = {key: val.pop() for key, val in self.data["valid"][-1]["data"].items() if key != "filename"}
+                self.data["valid"][-1]["end_time"] = float(row["elapsed_time"])
 
         self.data = {key: np.asarray(data_list) for key, data_list in self.data.items()}
 
