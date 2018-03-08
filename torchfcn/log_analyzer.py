@@ -23,15 +23,18 @@ class LogAnalyzer:
             for i, row in enumerate(reader):
                 if int(row["epoch"]) > len(self.data["train"]) - 1:
                     self.data["train"].append({"data": {}})
+                if row["train/loss"] != "" and is_validation:
+                    is_validation = False
+                    self.data["valid"][-1]["mean"] = {key: val.pop() for key, val in
+                                                      self.data["valid"][-1]["data"].items() if key != "filename"}
+                    self.data["valid"][-1]["end_time"] = float(row["elapsed_time"])
+                elif row["valid/loss"] != "" and not is_validation:
+                    is_validation = True
+                    self.data["valid"].append(
+                        {"data": {}, "epoch": int(row["epoch"]), "iteration": int(row["iteration"]),
+                         "start_time": self.data["train"][-1]["data"]["elapsed_time"][-1], "end_time": None})
                 for key, val in row.items():
                     if val != "" and val is not None:
-                        if "train" in key and is_validation:
-                            is_validation = False
-                            self.data["valid"][-1]["mean"] = {key: val.pop() for key, val in self.data["valid"][-1]["data"].items() if key != "filename"}
-                            self.data["valid"][-1]["end_time"] = float(row["elapsed_time"])
-                        elif "valid" in key and not is_validation:
-                            is_validation = True
-                            self.data["valid"].append({"data": {}, "epoch": int(row["epoch"]), "iteration": int(row["iteration"]), "start_time": self.data["train"][-1]["data"]["elapsed_time"][-1], "end_time": None})
                         if key in {"iteration", "epoch"}:
                             continue
                         else:
