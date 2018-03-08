@@ -87,14 +87,14 @@ class Trainer(object):
             'train/fwavacc',
             'valid/loss',
             'valid/acc',
-            'valid/acc_mean_cls',
+            'valid/mean_acc_cls',
             'valid/fwavacc',
             'valid/mean_iu',
             'valid/mean_bj',
             'elapsed_time',
         ]
 
-        for metric in ["valid/acc_mean_cls", "valid/mean_iu", "valid/mean_bj"]:
+        for metric in ["valid/mean_acc_cls", "valid/mean_iu", "valid/mean_bj"]:
             metric_index = self.log_headers.index(metric)
             if "mean_" in metric:
                 metric = metric.replace("mean_", "")
