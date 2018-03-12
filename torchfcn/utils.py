@@ -119,7 +119,7 @@ def boundary_jaccard(lbl_true, lbl_pred, classes=None):
             bjs.append(TP / (TP + FP + FN))
         else:
             if not np.any(class_gt) and not np.any(class_pred):
-                bjs.append("N/A")
+                bjs.append(np.nan)
             else:
                 bjs.append(0)
 
