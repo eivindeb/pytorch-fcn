@@ -61,7 +61,8 @@ class LogAnalyzer:
 
     def validation_metric_histogram(self, metric, validation_idx=-1):
         data = self.data["valid"][validation_idx]["data"]["valid/{}".format(metric)]
-        plt.hist(data, bins=100)
+        data = np.asarray(data)
+        plt.hist(data[~np.isnan(data)], bins=100)
         plt.title("Histogram for metric {} in validation {}".format(metric, validation_idx))
         plt.show()
 
@@ -82,12 +83,18 @@ class LogAnalyzer:
                 include_validation = False
             else:
                 if per_class:
-                    base_factor = valid_factor.replace("mean_", "")
+                    if "mean_" in valid_factor:
+                        base_factor = valid_factor.replace("mean_", "")
+                    elif "mean" in valid_factor:
+                        base_factor = valid_factor.replace("mean", "")
+                    else:
+                        base_factor = valid_factor
                     valid_factors = [f for f in self.data["valid"][-1]["mean"] if base_factor in f]
                     valid_y_values = {f: [] for f in valid_factors}
+                    valid_x_values = {f: [] for f in valid_factors}
                 else:
                     valid_y_values = []
-                valid_x_values = []
+                    valid_x_values = []
         if not include_validation and not include_training:
             print("No data available for requested factor")
             raise UnexpectedFactor
@@ -102,7 +109,7 @@ class LogAnalyzer:
                             valid_epoch_data = [data["mean"][f] if f in data["mean"] else 0 for data in self.data["valid"] if data["epoch"] == i]
                             if len(valid_epoch_data) > 0:
                                 valid_y_values[f].append(np.average(valid_epoch_data))
-                        valid_x_values.append(i)
+                                valid_x_values[f].append(i)
                     else:
                         valid_epoch_data = [data["mean"][valid_factor] for data in self.data["valid"] if data["epoch"] == i]  # last or average?
                         if len(valid_epoch_data) > 0:
@@ -131,17 +138,22 @@ class LogAnalyzer:
             if include_validation:
                 if per_class:
                     for f in valid_factors:
-                        valid_y_values[f] = [d["mean"][f] if f in d["mean"] else 0 for d in self.data["valid"]]
+                        for d in self.data["valid"]:
+                            if f in d["mean"]:
+                                valid_y_values[f].append(d["mean"][f])
+                                valid_x_values[f].append(d["iteration"])
                 else:
-                    valid_y_values = [d["mean"][valid_factor] for d in self.data["valid"]]
-                valid_x_values = [d["iteration"] for d in self.data["valid"]]
+                    for d in self.data["valid"]:
+                        if valid_factor in d["mean"]:
+                            valid_y_values.append(d["mean"][valid_factor])
+                            valid_x_values.append(d["iteration"])
 
         if include_training:
             plt.plot(x_values, y_values, label="Training")
         if include_validation:
             if per_class:
                 for f in valid_factors:
-                    plt.plot(valid_x_values, valid_y_values[f], label=f, marker="o")
+                    plt.plot(valid_x_values[f], valid_y_values[f], label=f, marker="o")
             else:
                 plt.plot(valid_x_values, valid_y_values, label="Validation", marker="o")
         plt.title(factor)
