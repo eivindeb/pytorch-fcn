@@ -7,8 +7,7 @@ import skimage
 from skimage import segmentation
 from scipy import spatial
 import math
-import torch
-import torchfcn
+
 
 class InvalidClassesError(Exception):
     pass
@@ -34,7 +33,7 @@ def plot(cc_labels, label=None, img=None):
         ax1_im = ax1.imshow(cc_labels)
         colorbar(ax1_im)
     elif subplot_count == 3:
-        f, (ax0, ax1, ax2) = plt.subplots(1, 3, subplot_kw={"xticks": [], "yticks": []})
+        f, (ax0, ax1, ax2) = plt.subplots(1, 3, subplot_kw={"xticks": [], "yticks": []}, **{"figsize": (10, 5), "dpi": 50})
         ax0_im = ax0.imshow(img)
         #colorbar(ax0_im)
         ax1_im = ax1.imshow(label)
@@ -58,7 +57,7 @@ def classify_chart(data, classes, area_threshold):
     :param data: Binary data where 1 represents chart data, and 0 background
     :param classes: The image value of the two classes to classify chart data in [under_threshold, over_threshold]
     :param area_threshold: Connected component area threshold used to classify chart into classes
-    :return: Data where each 1 in input is classified into(label == 2).astype(np.uint8) one of the two classes
+    :return: Data where each 1 in input is classified into one of the two classes
     """
     if not isinstance(classes, list) or len(classes) != 2:
         raise InvalidClassesError
@@ -71,6 +70,36 @@ def classify_chart(data, classes, area_threshold):
     data = data * classes[0]
     data[(cc_labels != 0) & (stats[cc_labels][:, :, 4] >= area_threshold)] = classes[1]
     return data
+
+def test_remove():
+    label_folder = "/data/polarlys/labels/"
+    data_folder = "/nas0"
+    with open("/home/eivind/Documents/polarlys_datasets/test/test_vessel_labels.txt", "r") as index:
+        lines = index.readlines()[:20]
+        for line_num, line in enumerate(lines):
+            filename = line.split(";")[0]
+            file_label = np.load(osp.join(label_folder, filename.replace(".bmp", "_label.npy")))
+            file_data = cv2.imread(osp.join(data_folder, filename), 0)[:, 0:2000]
+            process_label(file_data, file_label)
+
+
+def remove_vessels_close_to_land(label, distance_threshold=10):
+    chart_boundary = segmentation.find_boundaries(label == 2, connectivity=1, mode="inner", background=0)
+    chart_boundary_coords = np.transpose(np.where(chart_boundary))
+
+    if chart_boundary_coords.size > 0:
+        retval, cc_labels, stats, centroids = get_connected_components(label == 1, 8)
+        if retval > 1:
+            chart_tree = spatial.cKDTree(chart_boundary_coords)
+
+            for cc_idx in range(1, retval):
+                dist, idx = chart_tree.query(np.flipud(centroids[cc_idx]))
+                if dist <= distance_threshold:
+                    cc_labels[cc_labels == cc_idx] = 0
+
+            label[(label == 1) & (cc_labels == 0)] = 0
+
+    return label
 
 
 def get_connected_components(data, connectivity):
@@ -88,7 +117,7 @@ def process_label(data, lbl):
                                          classes=[4, 2],
                                          area_threshold=10000)
 
-    label[(label == 2) | (label == 3)] = 0
+    lbl[(lbl == 2) | (lbl == 3)] = 0
 
     land = chart_classified == 2
     hidden_by_land_mask = np.empty(land.shape, dtype=np.uint8)
