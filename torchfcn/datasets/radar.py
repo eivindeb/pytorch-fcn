@@ -115,6 +115,7 @@ class RadarDatasetFolder(data.Dataset):
         self.land_threshold = config["Parameters"].getint("LandThreshold", 70)
         self.include_weather_data = config["Parameters"].getboolean("IncludeWeatherData", False)
         self.chart_area_threshold = config["Parameters"].getint("ChartAreaThreshold", 10000)
+        self.min_vessel_land_dist = config["Parameters"].getfloat("MinVesselLandDistance", 10)
 
         height_divisons = config["Parameters"].getint("HeightDivisions", 2)
         width_divisons = config["Parameters"].getint("WidthDivisions", 0)
@@ -735,6 +736,9 @@ class RadarDatasetFolder(data.Dataset):
         # Process label source data
         if "vessel" in self.class_names:
             label[label == self.LABEL_SOURCE["ais"]] = self.LABELS["vessel"]
+
+            if self.min_vessel_land_dist > 0:
+                label = cc.remove_vessels_close_to_land(label, distance_threshold=self.min_vessel_land_dist)
         else:
             label[label == self.LABEL_SOURCE["ais"]] = self.LABELS["background"]
 
