@@ -474,7 +474,7 @@ class RadarDatasetFolder(data.Dataset):
 
         filter_stats = {"Time": 0, "No targets": 0, "Missing data": 0}
 
-        with open(osp.join(self.root, "processed_files.txt"), "r+") as processed_files_index:
+        with open(osp.join(self.root, "processed_files.txt"), "a+") as processed_files_index:
             lines = processed_files_index.readlines()
             files_without_targets = [f.rstrip("\n") for f in lines if f.split(";")[1] in ["false\n", "[]\n"]]
             files_with_targets = [f.rstrip("\n") for f in lines if f.split(";")[1] not in ["false\n", "[]\n"]]
