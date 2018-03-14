@@ -381,10 +381,7 @@ class RadarDatasetFolder(data.Dataset):
 
                     for i, data_range in enumerate(self.data_ranges):
                         if target_locations is None:  # ais target data missing, TODO: actually have to check if targets are hidden...
-                            basename = osp.splitext(filename)[0]
-                            t = self.data_loader.get_time_from_basename(basename)
-                            sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
-                            ais_targets = self.data_loader.load_ais_targets_sensor(t, sensor, sensor_index)
+                            ais_targets = self.get_ais_targets(filename)
                             ais_targets_string = self.ais_targets_to_string(ais_targets)
                             target_locations = self.ais_targets_string_to_list(ais_targets_string)
 
@@ -498,11 +495,7 @@ class RadarDatasetFolder(data.Dataset):
                             filter_stats["Time"] += 1
                             continue
 
-                        basename = osp.splitext(file)[0]
-                        t = self.data_loader.get_time_from_basename(basename)
-                        sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
-
-                        ais_targets = self.data_loader.load_ais_targets_sensor(t, sensor, sensor_index)
+                        ais_targets = self.get_ais_targets(file)
 
                         if self.remove_files_without_targets and file not in files_with_targets:
                             if file in files_without_targets:
@@ -900,6 +893,8 @@ class RadarDatasetFolder(data.Dataset):
                     data_range[1].stop is None or point[1] + margin <= data_range[1].stop))
 
     def ais_targets_to_list(self, ais_targets, locations_per_target=1):
+        if isinstance(ais_targets, dict):
+            ais_targets = [target for target in ais_targets.values()]
         assert type(ais_targets[0]) == np.ndarray
         res = []
 
@@ -919,8 +914,7 @@ class RadarDatasetFolder(data.Dataset):
     def ais_targets_to_string(self, ais_targets, locations_per_target=1):
         if len(ais_targets) == 0:
             return "[]"
-
-        if type(ais_targets[0]) == np.ndarray:
+        if isinstance(ais_targets, dict) or type(ais_targets[0]) == np.ndarray:
             ais_targets = self.ais_targets_to_list(ais_targets, locations_per_target=locations_per_target)
 
         if locations_per_target != 1:
@@ -939,6 +933,17 @@ class RadarDatasetFolder(data.Dataset):
         for target in ais_targets_string.split("/"):
             target = target.strip("[]").split(",")
             ais_targets.append([int(target[0]), int(target[1])])
+
+        return ais_targets
+
+    def get_ais_targets(self, data_path):
+        basename = osp.splitext(data_path)[0]
+        t = self.data_loader.get_time_from_basename(basename)
+        sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
+
+        ais_targets = self.data_loader.load_ais_targets_sensor(t, sensor, sensor_index)
+        if isinstance(ais_targets, tuple):
+            ais_targets = ais_targets[1]
 
         return ais_targets
 
