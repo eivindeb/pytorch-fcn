@@ -22,6 +22,7 @@ import cv2
 from matplotlib import pyplot as plt
 from torchfcn import cc
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from fcn.utils import label2rgb
 
 
 """
@@ -954,15 +955,19 @@ class RadarDatasetFolder(data.Dataset):
                     ]
                 )
 
-    def show_image(self, index):
-        data_path = self.files[self.split][index]["data"]
-        data_range = self.data_ranges[self.files[self.split][index]["range"]]
+    def show_image(self, index=None, data_path=None):
+        if index is None and data_path is None:
+            return
+        if index is not None:
+            data_path = self.files[self.split][index]["data"]
+            data_range = self.data_ranges[self.files[self.split][index]["range"]]
+        else:
+            data_path = self.get_data_path(data_path)
+            data_range = np.s_[:, :]
 
         img = self.load_image(data_path)[data_range]
-        img = cv2.resize(img, (0, 0), fx=0.5, fy=0.5)
-        cv2.imshow("image", img)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        plt.imshow(img)
+        plt.show()
 
     def show_label(self, index=None, label=None):
         if index is None and label is None:
@@ -977,19 +982,28 @@ class RadarDatasetFolder(data.Dataset):
         plt.colorbar()
         plt.show()
 
-    def show_image_with_label(self, index):
-        data_path = self.files[self.split][index]["data"]
-        data_range = self.data_ranges[self.files[self.split][index]["range"]]
-        label_path = self.files[self.split][index]["label"]
+    def show_image_with_label(self, index=None, data_path=None):
+        if index is None and data_path is None:
+            return
+
+        if index is not None:
+            data_path = self.files[self.split][index]["data"]
+            data_range = self.data_ranges[self.files[self.split][index]["range"]]
+            label_path = self.files[self.split][index]["label"]
+        else:
+            data_path = self.get_data_path(data_path)
+            label_path = self.get_label_path(data_path)
+            data_range = np.s_[:self.image_height, :self.image_width]
 
         img = self.load_image(data_path)[data_range]
-        #img = cv2.resize(img, (0, 0), fx=0.5, fy=0.5)
+        if len(img.shape) == 2:
+            img = np.repeat(img[:, :, np.newaxis], 3, 2)
 
         lbl = self.get_label(data_path, label_path, index=index)[data_range]
-        f, (ax0, ax1) = plt.subplots(1, 2, subplot_kw={"xticks": [], "yticks": []})
-        ax0.imshow(img, cmap=plt.cm.jet)
-        ax1_im = ax1.imshow(lbl)
-        self._colorbar(ax1_im)
+
+        print(np.transpose(np.where(lbl == 1)))
+        res = label2rgb(lbl, img, n_labels=len(self.class_names))
+        plt.imshow(res)
         plt.show()
 
 
