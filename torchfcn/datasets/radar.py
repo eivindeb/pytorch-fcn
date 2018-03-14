@@ -536,7 +536,7 @@ class RadarDatasetFolder(data.Dataset):
                                 filter_stats["No targets"] += 1
                                 continue
 
-                        img = self.data_loader.load_image(t, sensor, sensor_index)
+                        img = self.load_image(file)
                         if img is None or type(img) == "list":  # check if data is corrupted
                             filter_stats["Missing data"] += 1
                             continue
