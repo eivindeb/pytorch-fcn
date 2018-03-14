@@ -95,9 +95,7 @@ def remove_vessels_close_to_land(label, distance_threshold=10):
             for cc_idx in range(1, retval):
                 dist, idx = chart_tree.query(np.flipud(centroids[cc_idx]))
                 if dist <= distance_threshold:
-                    cc_labels[cc_labels == cc_idx] = 0
-
-            label[(label == 1) & (cc_labels == 0)] = 0
+                    label[cc_labels == cc_idx] = 0
 
     return label
 
