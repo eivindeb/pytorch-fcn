@@ -61,15 +61,17 @@ class LogAnalyzer:
 
     def validation_metric_histogram(self, metric, validation_idx=-1):
         data = self.data["valid"][validation_idx]["data"]["valid/{}".format(metric)]
+        iteration = self.data["valid"][validation_idx]["iteration"]
         data = np.asarray(data)
         plt.hist(data[~np.isnan(data)], bins=100)
-        plt.title("Histogram for metric {} in validation {}".format(metric, validation_idx))
+        plt.title("Histogram for {} in validation on iteration {}".format(metric, iteration))
         plt.show()
 
     def get_low_scoring_files(self, metric, percentile=1, validation_idx=-1):
         data = np.asarray(self.data["valid"][validation_idx]["data"]["valid/{}".format(metric)])
         N = int(data.size * percentile / 100)
-        res = np.argsort(-data)[:N]
+        res = np.argsort(data)[:N]
+        print(data[res[0]])
         return [self.data["valid"][-1]["data"]["filename"][i] for i in res]
 
 
@@ -90,13 +92,14 @@ class LogAnalyzer:
                     else:
                         base_factor = valid_factor
                     valid_factors = [f for f in self.data["valid"][-1]["mean"] if base_factor in f]
+                    valid_factors.append(valid_factor)
                     valid_y_values = {f: [] for f in valid_factors}
                     valid_x_values = {f: [] for f in valid_factors}
                 else:
                     valid_y_values = []
                     valid_x_values = []
         if not include_validation and not include_training:
-            print("No data available for requested factor")
+            print("No data available for requested factor {}".format(factor))
             raise UnexpectedFactor
 
         if x_axis_scale == "epoch":
