@@ -58,6 +58,10 @@ class DataFileNotFound(Exception):
     pass
 
 
+class AmbiguousDataPath(Exception):
+    pass
+
+
 class RadarDatasetFolder(data.Dataset):
     LABEL_SOURCE = {"ais": 1, "chart": 2}
     LABELS = {"background": 0, "vessel": 1, "land": 2, "unknown": 3, "islet": 4, "unlabeled": -1}
@@ -310,6 +314,14 @@ class RadarDatasetFolder(data.Dataset):
         return filename if with_extension else osp.splitext(filename)[0]
 
     def get_data_path(self, radar_relative_path):
+        path_split = radar_relative_path.split("/")
+        if len(path_split) == 1:
+            raise AmbiguousDataPath
+        elif len(path_split) < 4:
+            filename = path_split[-1]
+            file_times = filename.split("-")
+            file_times[-1] = file_times[-1][:2]
+            radar_relative_path = "{}/{}/{}/{}".format("-".join(file_times[:-1]), "-".join(file_times), path_split[-2], filename)
         return osp.join(self.data_folder, radar_relative_path)
 
     def get_label_path(self, data_path):
