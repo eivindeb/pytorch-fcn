@@ -12,7 +12,7 @@ import torch
 import yaml
 
 import torchfcn
-
+import shutil
 
 configurations = {
     # same configuration as original work
@@ -106,24 +106,34 @@ def main():
     if cuda:
         torch.cuda.manual_seed(1337)
 
+
+    root = "/home/eivind/Documents/polarlys_datasets"
+
+    if resume:
+        checkpoint = torch.load(resume)
+        out = checkpoint['out']
+        dataset_cfg = osp.join(out, "polarlys_cfg.txt")
+    else:
+        dataset_cfg = osp.join(root, "polarlys_cfg.txt")
+
     # 1. dataset
 
     #root = "/media/stx/LaCie1/export"
 
     #root = osp.expanduser('~/data/datasets/Radar')
-    root = "/home/eivind/Documents/polarlys_datasets"
 
     data_folder = "/nas0/"
     #data_folder = root
 
+
     kwargs = {'num_workers': 8, 'pin_memory': True} if cuda else {}
     train_loader = torch.utils.data.DataLoader(
         torchfcn.datasets.RadarDatasetFolder(
-            root, split='train', cfg=osp.join(root, "polarlys_cfg.txt"), transform=True, dataset_name="2018"),
+            root, split='train', cfg=dataset_cfg, transform=True, dataset_name="2018"),
         batch_size=1, shuffle=True, **kwargs)
     val_loader = torch.utils.data.DataLoader(
         torchfcn.datasets.RadarDatasetFolder(
-            root, split='valid', cfg=osp.join(root, "polarlys_cfg.txt"), transform=True, dataset_name="2018"),
+            root, split='valid', cfg=dataset_cfg, transform=True, dataset_name="2018"),
         batch_size=1, shuffle=False, **kwargs)
 
     # 2. model
@@ -131,16 +141,14 @@ def main():
     #val_loader.dataset.files["valid"] = val_loader.dataset.files["valid"][0:10]
     #train_loader.dataset.files["train"] = train_loader.dataset.files["train"][0:100]
 
-    #model = torchfcn.models.FCN32s(n_class=train_loader.dataset.class_names.size, metadata=train_loader.dataset.include_weather_data)
-    model = torchfcn.models.FCN8sAtOnce(n_class=train_loader.dataset.class_names.size, metadata=train_loader.dataset.include_weather_data)
+    #model = torchfcn.models.FCN32s(n_class=train_loader.dataset.class_names.size, metadata=train_loader.dataset.metadata)
+    model = torchfcn.models.FCN8sAtOnce(n_class=train_loader.dataset.class_names.size, metadata=train_loader.dataset.metadata)
     start_epoch = 0
     start_iteration = 0
     if resume:
-        checkpoint = torch.load(resume)
         model.load_state_dict(checkpoint['model_state_dict'])
         start_epoch = checkpoint['epoch']
         start_iteration = checkpoint['iteration']
-        out = checkpoint['out']
     else:
         vgg16 = torchfcn.models.VGG16(pretrained=False)
         model.copy_params_from_vgg16(vgg16)
@@ -173,6 +181,8 @@ def main():
         interval_checkpoint=cfg.get("interval_checkpoint", None),
         interval_weight_update=cfg.get("interval_weight_update", None),
     )
+    if not resume:
+        shutil.copy(dataset_cfg, osp.join(trainer.out, "polarlys_cfg.txt"))
     trainer.epoch = start_epoch
     trainer.iteration = start_iteration
     trainer.train()
