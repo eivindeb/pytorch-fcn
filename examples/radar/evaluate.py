@@ -44,6 +44,7 @@ def main():
         batch_size=1, shuffle=False, **kwargs)
 
     n_class = len(test_loader.dataset.class_names)
+    metadata = test_loader.dataset.metadata
 
     if osp.basename(model_file).startswith('fcn32s') or False:
         model = torchfcn.models.FCN32s(n_class=n_class)

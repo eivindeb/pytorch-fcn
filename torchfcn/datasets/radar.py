@@ -126,6 +126,8 @@ class RadarDatasetFolder(data.Dataset):
         width_divisons = config["Parameters"].getint("WidthDivisions", 0)
         overlap = config["Parameters"].getint("Overlap", 20)
 
+        self.metadata = True if self.include_weather_data else False
+
         self.set_data_ranges(height_divisons, width_divisons, overlap=overlap)
 
         if sum(self.set_splits) != 1:
