@@ -794,7 +794,7 @@ class RadarDatasetFolder(data.Dataset):
 
         return label
 
-    def update_cached_labels(self, components):
+    def update_cached_labels(self, components, collect_new=True):
         processed_labels = set()
         for entry in tqdm.tqdm(self.files[self.split], total=len(self.files[self.split]), desc="Updating cached labels", leave=False):
             label_path = self.get_label_path(entry["data"])
@@ -804,8 +804,10 @@ class RadarDatasetFolder(data.Dataset):
             data_path = entry["data"]
             try:
                 label = np.load(label_path).astype(np.int16)
-            except IOError as e:
+            except (AttributeError, IOError) as e:
                 print("Label does not exists at {}".format(label_path))
+                if collect_new:
+                    label = self.get_label(data_path)
                 continue
 
             label = label[:self.image_height, :self.image_width]
@@ -827,16 +829,16 @@ class RadarDatasetFolder(data.Dataset):
                 ais = self.data_loader.load_ais_layer_sensor(t, sensor, sensor_index)
                 if isinstance(ais, list):
                     self.logger.warning("Label {} not updated.\nAIS data could not be gathered".format(label_path))
-                    processed_labels.append(label_path)
+                    processed_labels.add(label_path)
                     continue
                 else:
                     ais = ais[:self.image_height, :self.image_width]
                 label[ais == 1] = self.LABEL_SOURCE["ais"]
-            if "chart" in components and "Radar0" in data_path:
+            if "chart" in components:
                 land = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, binary=True, only_first_range_step=True if self.image_width <= 2000 else False)
                 if isinstance(land, list):
                     self.logger.warning("Label {} not updated.\nChart data could not be gathered".format(label_path))
-                    processed_labels.append(label_path)
+                    processed_labels.add(label_path)
                     continue
                 else:
                     land = land[:self.image_height, :self.image_width]
