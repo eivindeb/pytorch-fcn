@@ -94,6 +94,11 @@ class Trainer(object):
             'elapsed_time',
         ]
 
+        self.aux = getattr(model, "use_aux", False)
+
+        if self.aux:
+            self.log_headers.insert(self.log_headers.index("train/loss") + 1, "train/loss_aux")
+
         for metric in ["valid/mean_acc_cls", "valid/mean_iu", "valid/mean_bj"]:
             metric_index = self.log_headers.index(metric)
             if "mean_" in metric:
@@ -149,23 +154,21 @@ class Trainer(object):
 
         metrics = np.zeros((len(self.val_loader), self.valid_headers_count))
         hist = np.zeros((self.n_class, self.n_class))
-        for batch_idx, (data, target) in tqdm.tqdm(
+        for batch_idx, batch in tqdm.tqdm(
                 enumerate(self.val_loader), total=len(self.val_loader),
                 desc='Valid iteration=%d' % self.iteration, ncols=80,
                 leave=False):
 
+            data, target = batch[0].cuda(), batch[1].cuda()
+            data, target = Variable(data, volatile=True), Variable(target)
+
             if self.metadata:
-                if self.cuda:
-                    data_img, data_meta, target = data["image"].cuda(), data["metadata"].cuda(), target.cuda()
-                else:
-                    data_img, data_meta, target = data["image"], data["metadata"], target
-                data_img, data_meta, target = Variable(data_img, volatile=True), Variable(data_meta, volatile=True), Variable(target)
-                score = self.model(data_img, data_meta)
+                metadata = batch[2].cuda()
+                metadata = Variable(metadata, volatile=True)
+                score = self.model(data, metadata)
             else:
-                if self.cuda:
-                    data, target = data.cuda(), target.cuda()
-                data, target = Variable(data, volatile=True), Variable(target)
                 score = self.model(data)
+
             try:
                 loss = cross_entropy2d(score, target, weight=torch.from_numpy(self.train_loader.dataset.class_weights).float().cuda(),
                                    size_average=self.size_average)
@@ -179,12 +182,11 @@ class Trainer(object):
                 filename = self.val_loader.dataset.files["valid"][batch_idx]["data"][0].split("/")
                 self.logger.warning("Loss was NaN while validating\n:image {}".format(filename))
                 continue
+
             val_loss = float(loss.data[0]) / len(data)
 
-            if self.metadata:
-                imgs = data_img.data.cpu()
-            else:
-                imgs = data.data.cpu()
+
+            imgs = data.data.cpu()
             lbl_pred = score.data.max(1)[1].cpu().numpy()[:, :, :]
             lbl_true = target.data.cpu()
 
@@ -274,7 +276,7 @@ class Trainer(object):
 
         self.optim.zero_grad()
 
-        for batch_idx, (data, target) in tqdm.tqdm(enumerate(self.train_loader), total=len(self.train_loader),
+        for batch_idx, batch in tqdm.tqdm(enumerate(self.train_loader), total=len(self.train_loader),
                 desc='Train epoch=%d' % self.epoch, ncols=80, leave=False):
             if self.iteration % self.interval_validate == 0 and self.iteration != 0:
                 self.validate()
@@ -297,23 +299,29 @@ class Trainer(object):
 
             assert self.model.training
 
+            data, target = batch[0].cuda(), batch[1].cuda()
+            data, target = Variable(data), Variable(target)
+            batch_size = len(data)
+            del batch
+
             if self.metadata:
-                if self.cuda:
-                    data_img, data_meta, target = data["image"].cuda(), data["metadata"].cuda(), target.cuda()
+                metadata = batch[2].cuda()
+                metadata = Variable(metadata)
+                if self.aux:
+                    score, aux = self.model(data, metadata)
                 else:
-                    data_img, data_meta, target = data["image"], data["metadata"], target
-                data_img, data_meta, target = Variable(data_img), Variable(data_meta), Variable(target)
-                score = self.model(data_img, data_meta)
-                batch_size = len(data_img)
+                    score = self.model(data, metadata)
             else:
-                if self.cuda:
-                    data, target = data.cuda(), target.cuda()
-                data, target = Variable(data), Variable(target)
-                #self.optim.zero_grad()
-                score = self.model(data)
-                batch_size = len(data)
+                if self.aux:
+                    score, aux = self.model(data)
+                else:
+                    score = self.model(data)
+
             try:
                 loss = cross_entropy2d(score, target, weight=torch.from_numpy(self.train_loader.dataset.class_weights).float().cuda(),
+                                   size_average=self.size_average)
+                if self.aux:
+                    aux_loss = cross_entropy2d(aux, target, weight=torch.from_numpy(self.train_loader.dataset.class_weights).float().cuda(),
                                    size_average=self.size_average)
             except ValueError:
                 free_memory(locals())
@@ -322,6 +330,8 @@ class Trainer(object):
                 continue
 
             loss /= batch_size  # average loss over batch
+            if self.aux:
+                aux_loss /= batch_size
 
             if np.isnan(float(loss.data[0])):
                 free_memory(locals())
@@ -345,8 +355,12 @@ class Trainer(object):
             with open(osp.join(self.out, 'log.csv'), 'a') as f:
                 elapsed_time = (datetime.datetime.now(pytz.timezone('Europe/Oslo')) - self.timestamp_start).total_seconds()
 
-                log = [self.epoch, self.iteration, self.train_loader.dataset.get_filename(batch_idx, with_radar=True)] + [loss.data[0]] + \
-                    list(metrics) + [''] * self.valid_headers_count + [elapsed_time]
+                log = [self.epoch, self.iteration, self.train_loader.dataset.get_filename(batch_idx, with_radar=True)] + [loss.data[0]]
+
+                if self.aux:
+                    log.append(aux_loss.data[0])
+
+                log.extend(list(metrics) + [''] * self.valid_headers_count + [elapsed_time])
                 log = map(str, log)
                 f.write(','.join(log) + '\n')
 

@@ -125,3 +125,26 @@ def boundary_jaccard(lbl_true, lbl_pred, classes=None):
 
     bjs.append(np.nanmean(bjs))
     return bjs
+
+
+def flatten(l):
+    for el in l:
+        try:
+            yield from flatten(el)
+        except TypeError:
+            yield el
+
+
+if __name__ == "__main__":
+    from collections import Iterable
+    import os.path as osp
+    rel_path = "2017-11-24/2017-11-24-19/Radar1/2017-11-24-19_57_41"
+    label_folder = "/data/polarlys/labels/"
+    data_folder = "/nas0"
+    lbl = np.load(osp.join(label_folder, rel_path + "_label.npy"))
+    #boundary_jaccard(lbl, lbl)
+    test = np.asarray([0.5, 0.3, 5, np.nan, 0.3])
+    print(test)
+    test_m = np.nanmean(test)
+    print(test_m)
+
