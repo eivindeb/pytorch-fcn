@@ -718,7 +718,7 @@ class RadarDatasetFolder(data.Dataset):
                 else:
                     chart = chart[:self.image_height, :self.image_width]
 
-                lbl[chart == 1] = self.LABEL_SOURCE["chart"]
+                label[chart == 1] = self.LABEL_SOURCE["chart"]
 
             if cached_label_missing:
                 save_path = self.save_numpy_file(self.data_path_to_rel_label_path(data_path), label.astype(np.int8), throw_exception=throw_save_exception)
