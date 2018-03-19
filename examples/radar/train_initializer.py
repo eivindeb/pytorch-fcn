@@ -13,6 +13,10 @@ import yaml
 
 import torchfcn
 import shutil
+import ptsemseg.models.pspnet as PSPNet
+import ptsemseg.models.linknet as LinkNet
+import ptsemseg.models.unet as Unet
+import pss.models.psp_net as psp_net
 
 configurations = {
     # same configuration as original work
@@ -24,7 +28,7 @@ configurations = {
         weight_decay=0.0005,
         interval_validate=30000,
         interval_checkpoint=500,  # checkpoint every 10 minutes
-        interval_weight_update=10,
+        interval_weight_update=1,
     )
 }
 
@@ -141,8 +145,14 @@ def main():
     #val_loader.dataset.files["valid"] = val_loader.dataset.files["valid"][0:10]
     #train_loader.dataset.files["train"] = train_loader.dataset.files["train"][0:100]
 
-    #model = torchfcn.models.FCN32s(n_class=train_loader.dataset.class_names.size, metadata=train_loader.dataset.metadata)
-    model = torchfcn.models.FCN8sAtOnce(n_class=train_loader.dataset.class_names.size, metadata=train_loader.dataset.metadata)
+    n_class = train_loader.dataset.class_names.size
+    #model = torchfcn.models.FCN32s(n_class=n_class, metadata=train_loader.dataset.metadata)
+    #model = torchfcn.models.FCN8sAtOnce(n_class=n_class, metadata=train_loader.dataset.metadata)
+    fcn = False#True
+    #model = PSPNet(n_classes=n_class, input_size=(500, 500))
+    #model = LinkNet(n_classes=n_class, in_channels=1)
+    #model = Unet(n_classes=n_class, in_channels=1)
+    model = psp_net.PSPNet(num_classes=n_class, pretrained=False)
     start_epoch = 0
     start_iteration = 0
     if resume:
@@ -150,22 +160,28 @@ def main():
         start_epoch = checkpoint['epoch']
         start_iteration = checkpoint['iteration']
     else:
-        vgg16 = torchfcn.models.VGG16(pretrained=False)
-        model.copy_params_from_vgg16(vgg16)
+        if fcn:
+            vgg16 = torchfcn.models.VGG16(pretrained=False)
+            model.copy_params_from_vgg16(vgg16)
     if cuda:
         model = model.cuda()
 
     # 3. optimizer
-
-    optim = torch.optim.SGD(
-        [
-            {'params': get_parameters(model, bias=False)},
-            {'params': get_parameters(model, bias=True),
-             'lr': cfg['lr'] * 2, 'weight_decay': 0},
-        ],
-        lr=cfg['lr'],
-        momentum=cfg['momentum'],
-        weight_decay=cfg['weight_decay'])
+    if fcn:
+        optim = torch.optim.SGD(
+            [
+                {'params': get_parameters(model, bias=False)},
+                {'params': get_parameters(model, bias=True),
+                 'lr': cfg['lr'] * 2, 'weight_decay': 0},
+            ],
+            lr=cfg['lr'],
+            momentum=cfg['momentum'],
+            weight_decay=cfg['weight_decay'])
+    else:
+        optim = torch.optim.SGD(model.parameters(),
+            lr=cfg['lr'],
+            momentum=cfg['momentum'],
+            weight_decay=cfg['weight_decay'])
     if resume:
         optim.load_state_dict(checkpoint['optim_state_dict'])
 
