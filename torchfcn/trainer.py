@@ -329,9 +329,10 @@ class Trainer(object):
                 self.logger.warning("Whole label for {} is unlabeled (-1)".format(filename))
                 continue
 
-            loss /= batch_size  # average loss over batch
             if self.aux:
-                aux_loss /= batch_size
+                loss = loss + 0.4 * aux_loss
+
+            loss /= batch_size  # average loss over batch
 
             if np.isnan(float(loss.data[0])):
                 free_memory(locals())
