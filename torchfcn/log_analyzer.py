@@ -77,12 +77,16 @@ class LogAnalyzer:
 
 
     def graph_factor(self, factor, x_axis_scale="iteration", include_validation=False, per_class=False, iteration_window=0, reject_outliers=True):
-        train_factor = "train/{}".format(factor)
-        include_training = any(train_factor in d["data"] for d in self.data["train"])
+        train_factors = [f for d in self.data["train"] for f in d["data"] if "train/{}".format(factor) in f]
+        #train_factors = {"train/{}".format(factor): []}
+        include_training = any(any(t_f in d["data"] for t_f in train_factors) for d in self.data["train"])
+        if include_training:
+            y_values = {t_f: [] for t_f in train_factors}
+            x_values = {t_f: [] for t_f in train_factors}
         if include_validation:
             valid_factor = "valid/{}".format(factor)
             if not any([valid_factor in d["data"] or valid_factor in d["mean"] for d in self.data["valid"]]):
-                print("No validation data available for requested factor")
+                print("No validation data available for requested factor {}".format(factor))
                 include_validation = False
             else:
                 if per_class:
@@ -104,8 +108,6 @@ class LogAnalyzer:
             raise UnexpectedFactor
 
         if x_axis_scale == "epoch":
-            x_values = range(len(self.data["train"]))
-            y_values = []
             for i, epoch in enumerate(self.data["train"]):
                 if include_validation:
                     if per_class:
@@ -120,25 +122,31 @@ class LogAnalyzer:
                             valid_y_values.append(np.average(valid_epoch_data))
                             valid_x_values.append(i)
                 if include_training:
-                    y_values.append(np.mean(epoch["data"][train_factor]))
+                    for t_f in train_factors:
+                        if t_f in epoch["data"]:
+                            y_values[t_f].append(np.mean(epoch["data"][t_f]))
+                            x_values[t_f].append(i)
 
         elif x_axis_scale == "iteration":
             if include_training:
-                data = []
+                data = {t_f: [] for t_f in train_factors}
                 for d in self.data["train"]:
-                    data.extend(d["data"][train_factor])
+                    for t_f in train_factors:
+                        data[t_f].extend(d["data"][t_f])
 
-                if iteration_window != 0:
-                    y_values = np.convolve(data, np.ones((iteration_window,))/iteration_window, mode="valid")
-                else:
-                    y_values = data
+                for t_f in train_factors:
+                    if iteration_window != 0:
+                        y_values[t_f] = np.convolve(data[t_f], np.ones((iteration_window,))/iteration_window, mode="valid")
+                    else:
+                        y_values[t_f] = data[t_f]
+                    x_values[t_f] = range(len(y_values[t_f]))
 
                 if reject_outliers:
-                    d = np.abs(y_values - np.median(y_values))
-                    mdev = np.median(d)
-                    s = d/mdev if mdev else 0
-                    y_values = y_values[s < 10]
-                x_values = range(len(y_values))
+                    for t_f in train_factors:
+                        d = np.abs(y_values[t_f] - np.median(y_values[t_f]))
+                        mdev = np.median(d)
+                        s = d/mdev if mdev else 0
+                        y_values[t_f] = y_values[t_f][s < 10]
             if include_validation:
                 if per_class:
                     for f in valid_factors:
@@ -153,7 +161,8 @@ class LogAnalyzer:
                             valid_x_values.append(d["iteration"])
 
         if include_training:
-            plt.plot(x_values, y_values, label="Training")
+            for t_f in train_factors:
+                plt.plot(x_values[t_f], y_values[t_f], label=t_f)
         if include_validation:
             if per_class:
                 for f in valid_factors:
