@@ -938,6 +938,7 @@ class RadarDatasetFolder(data.Dataset):
 
     def set_data_ranges(self, height_division_count, width_division_count, overlap=0):
         if height_division_count < 0 or width_division_count < 0 or overlap < 0:
+            print("All input arguments must be positive integers")
             raise ValueError
 
         try:
