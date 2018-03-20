@@ -21,7 +21,7 @@ import pss.models.psp_net as psp_net
 configurations = {
     # same configuration as original work
     # https://github.com/shelhamer/fcn.berkeleyvision.org
-    1: dict(
+    "fcn": dict(
         max_iteration=800000,
         lr=5e-11*0.07,  # the standard learning rate for VOC images (500x375) multiplied by ratio of radar dataset image size (1365x2000)
         momentum=0.99,
@@ -29,7 +29,17 @@ configurations = {
         interval_validate=30000,
         interval_checkpoint=500,  # checkpoint every 10 minutes
         interval_weight_update=1,
+    ),
+    "PSPnet": dict(
+        max_iteration=800000,
+        lr=5e-11*0.07,  # the standard learning rate for VOC images (500x375) multiplied by ratio of radar dataset image size (1365x2000)
+        momentum=0.99,
+        weight_decay=0.005,
+        interval_validate=10000,
+        interval_checkpoint=500,  # checkpoint every 10 minutes
+        interval_weight_update=1,
     )
+
 }
 
 
@@ -95,14 +105,23 @@ here = osp.dirname(osp.abspath(__file__))
 
 
 def main():
+    model_name = "PSPnet"
+    model_cfg = model_name
+
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', type=int, default=1,
                         choices=configurations.keys())
     parser.add_argument('--resume', help='Checkpoint path')
     args = parser.parse_args()
 
-    cfg = configurations[args.config]
-    out = get_log_dir('fcn32s', args.config, cfg)
+    if "fcn" in model_name:
+        fcn = True
+        model_cfg = "fcn"
+    else:
+        fcn = False
+
+    cfg = configurations[model_cfg]#configurations[args.config]
+    out = get_log_dir(model_name, args.config, cfg)
     resume = args.resume
     cuda = torch.cuda.is_available()
 
@@ -142,17 +161,15 @@ def main():
 
     # 2. model
 
-    #val_loader.dataset.files["valid"] = val_loader.dataset.files["valid"][0:10]
-    #train_loader.dataset.files["train"] = train_loader.dataset.files["train"][0:100]
-
     n_class = train_loader.dataset.class_names.size
-    #model = torchfcn.models.FCN32s(n_class=n_class, metadata=train_loader.dataset.metadata)
-    #model = torchfcn.models.FCN8sAtOnce(n_class=n_class, metadata=train_loader.dataset.metadata)
-    fcn = False#True
-    #model = PSPNet(n_classes=n_class, input_size=(500, 500))
-    #model = LinkNet(n_classes=n_class, in_channels=1)
-    #model = Unet(n_classes=n_class, in_channels=1)
-    model = psp_net.PSPNet(num_classes=n_class, pretrained=False)
+
+    if model_name == "PSPnet":
+        model = psp_net.PSPNet(num_classes=n_class, pretrained=False)
+    elif model_name == "fcn32s":
+        model = torchfcn.models.FCN32s(n_class=n_class, metadata=train_loader.dataset.metadata)
+    elif model_name == "fcn8s":
+        model = torchfcn.models.FCN8sAtOnce(n_class=n_class, metadata=train_loader.dataset.metadata)
+
     start_epoch = 0
     start_iteration = 0
     if resume:
