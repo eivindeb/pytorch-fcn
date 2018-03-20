@@ -64,6 +64,7 @@ class LogAnalyzer:
         iteration = self.data["valid"][validation_idx]["iteration"]
         data = np.asarray(data)
         plt.hist(data[~np.isnan(data)], bins=100)
+        plt.xlim(0, 1)
         plt.title("Histogram for {} in validation on iteration {}".format(metric, iteration))
         plt.show()
 
