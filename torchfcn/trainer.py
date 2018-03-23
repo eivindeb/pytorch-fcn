@@ -47,12 +47,13 @@ def cross_entropy2d(input, target, weight=None, size_average=True):
 class Trainer(object):
 
     def __init__(self, cuda, model, optimizer,
-                 train_loader, val_loader, out, max_iter,
+                 train_loader, val_loader, out, max_iter, scheduler=None, train_class_stats=None, shuffle=True,
                  size_average=False, interval_validate=None, interval_checkpoint=None, interval_weight_update=None):
         self.cuda = cuda
 
         self.model = model
         self.optim = optimizer
+        self.scheduler = scheduler
 
         self.train_loader = train_loader
         self.val_loader = val_loader
@@ -341,8 +342,6 @@ class Trainer(object):
                 continue  # likely could not load image from nas, just continue
             loss.backward()
 
-            self.iteration += 1
-
             if self.interval_weight_update is None or self.iteration % self.interval_weight_update == 0 and self.iteration != 0:
                 self.optim.step()
                 self.optim.zero_grad()
@@ -364,6 +363,11 @@ class Trainer(object):
                 log.extend(list(metrics) + [''] * self.valid_headers_count + [elapsed_time])
                 log = map(str, log)
                 f.write(','.join(log) + '\n')
+
+            if self.scheduler is not None:
+                self.scheduler.step(loss.data[0])
+
+            self.iteration += 1
 
             if self.iteration >= self.max_iter:
                 break
