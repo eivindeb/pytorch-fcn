@@ -49,16 +49,10 @@ def git_hash():
     return hash
 
 
-def get_log_dir(model_name, config_id, cfg):
+def get_log_dir(model_name, cfg):
     # load config
-    name = 'MODEL-%s_CFG-%03d' % (model_name, config_id)
-    for k, v in cfg.items():
-        v = str(v)
-        if '/' in v:
-            continue
-        name += '_%s-%s' % (k.upper(), v)
+    name = 'MODEL-%s' % (model_name)
     now = datetime.datetime.now(pytz.timezone('Europe/Oslo'))
-    name += '_VCS-%s' % git_hash()
     name += '_TIME-%s' % now.strftime('%Y%m%d-%H%M%S')
     # create out
     log_dir = osp.join(here, 'logs', name)
@@ -106,7 +100,7 @@ here = osp.dirname(osp.abspath(__file__))
 
 def main():
     model_name = "PSPnet"
-    model_cfg = model_name
+    dataset_name = "2018"
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', type=int, default=1,
@@ -119,9 +113,10 @@ def main():
         model_cfg = "fcn"
     else:
         fcn = False
+        model_cfg = model_name
 
     cfg = configurations[model_cfg]#configurations[args.config]
-    out = get_log_dir(model_name, args.config, cfg)
+    out = get_log_dir(model_name, cfg)
     resume = args.resume
     cuda = torch.cuda.is_available()
 
