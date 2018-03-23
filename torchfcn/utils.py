@@ -16,9 +16,11 @@ def label_accuracy_score(label_trues, label_preds, n_class, per_class=True):
     """Returns accuracy score evaluation result.
 
       - overall accuracy
+      (- per class accuracy)
       - mean accuracy
-      - mean IU
       - fwavacc
+      (- per class IU)
+      - mean IU
     """
     hist = np.zeros((n_class, n_class))
     for lt, lp in zip(label_trues, label_preds):

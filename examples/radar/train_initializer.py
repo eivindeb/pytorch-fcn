@@ -236,6 +236,7 @@ def main():
         val_loader=val_loader,
         out=out,
         max_iter=cfg['max_iteration'],
+        train_class_stats={"acc_cls": [1], "iu": list(range(n_class))},
         interval_validate=cfg.get('interval_validate', len(train_loader)),
         interval_checkpoint=cfg.get("interval_checkpoint", None),
         interval_weight_update=cfg.get("interval_weight_update", None),

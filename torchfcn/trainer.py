@@ -83,9 +83,9 @@ class Trainer(object):
             'filename',
             'train/loss',
             'train/acc',
-            'train/acc_cls',
-            'train/mean_iu',
+            'train/mean_acc_cls',
             'train/fwavacc',
+            'train/mean_iu',
             'valid/loss',
             'valid/acc',
             'valid/mean_acc_cls',
@@ -99,6 +99,13 @@ class Trainer(object):
 
         if self.aux:
             self.log_headers.insert(self.log_headers.index("train/loss") + 1, "train/loss_aux")
+
+        self.train_class_stats = train_class_stats
+        if train_class_stats is not None:
+            for metric, class_idxs in train_class_stats.items():
+                idx = self.log_headers.index("train/mean_{}".format(metric))
+                class_headers = ["train/{}_{}".format(metric, class_name) for i, class_name in enumerate(class_names) if i in class_idxs]
+                self.log_headers[idx:idx] = class_headers
 
         for metric in ["valid/mean_acc_cls", "valid/mean_iu", "valid/mean_bj"]:
             metric_index = self.log_headers.index(metric)
@@ -349,7 +356,7 @@ class Trainer(object):
             metrics = []
             lbl_pred = score.data.max(1)[1].cpu().numpy()[:, :, :]
             lbl_true = target.data.cpu().numpy()
-            metrics = torchfcn.utils.label_accuracy_score(lbl_true, lbl_pred, n_class=n_class, per_class=False)
+            metrics = torchfcn.utils.label_accuracy_score(lbl_true, lbl_pred, n_class=n_class, per_class=self.train_class_stats is not None)
             #metrics = np.mean(metrics, axis=0)
 
             with open(osp.join(self.out, 'log.csv'), 'a') as f:
@@ -360,7 +367,17 @@ class Trainer(object):
                 if self.aux:
                     log.append(aux_loss.data[0])
 
-                log.extend(list(metrics) + [''] * self.valid_headers_count + [elapsed_time])
+                if self.train_class_stats is not None:
+                    log.append(metrics[0])
+                    if "acc_cls" in self.train_class_stats:
+                        log.extend([c_m for i, c_m in enumerate(metrics[1]) if i in self.train_class_stats["acc_cls"]])
+                    log.extend(metrics[2:4])
+                    if "iu" in self.train_class_stats:
+                        log.extend([c_m for i, c_m in enumerate(metrics[4]) if i in self.train_class_stats["iu"]])
+                    log.append(metrics[5])
+                else:
+                    log.extend(list(metrics))
+                log.extend([''] * self.valid_headers_count + [elapsed_time])
                 log = map(str, log)
                 f.write(','.join(log) + '\n')
 
