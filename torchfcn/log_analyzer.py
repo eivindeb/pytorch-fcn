@@ -144,6 +144,8 @@ class LogAnalyzer:
                         data[t_f].extend(d["data"][t_f])
 
                 for t_f in train_factors:
+                    data[t_f] = np.asarray(data[t_f])  # TODO: x values are slightly off due to removed nans
+                    data[t_f] = data[t_f][~np.isnan(data[t_f])]
                     if iteration_window != 0:
                         y_values[t_f] = np.convolve(data[t_f], np.ones((iteration_window,))/iteration_window, mode="valid")
                     else:
@@ -155,7 +157,9 @@ class LogAnalyzer:
                         d = np.abs(y_values[t_f] - np.median(y_values[t_f]))
                         mdev = np.median(d)
                         s = d/mdev if mdev else 0
+                        outliers = np.where(s >= 10)[0]
                         y_values[t_f] = y_values[t_f][s < 10]
+                        x_values[t_f] = [i for i in x_values[t_f] if i not in outliers]
             if include_validation:
                 if per_class:
                     for f in valid_factors:
@@ -170,11 +174,11 @@ class LogAnalyzer:
                             valid_x_values.append(d["iteration"])
 
         if include_training:
-            for t_f in train_factors:
+            for t_f in sorted(train_factors):
                 plt.plot(x_values[t_f], y_values[t_f], label=t_f)
         if include_validation:
             if per_class:
-                for f in valid_factors:
+                for f in sorted(valid_factors):
                     plt.plot(valid_x_values[f], valid_y_values[f], label=f, marker="o")
             else:
                 plt.plot(valid_x_values, valid_y_values, label="Validation", marker="o")
