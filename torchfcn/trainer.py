@@ -137,6 +137,9 @@ class Trainer(object):
 
     def validate(self):
         def free_memory(variables):
+            if "batch" in variables:
+                nonlocal batch
+                del batch
             if "target" in variables:
                 nonlocal target
                 del target
@@ -258,6 +261,10 @@ class Trainer(object):
 
         if training:
             self.model.train()
+
+        free_memory(locals())
+
+
 
     def train_epoch(self):
         def free_memory(variables):
