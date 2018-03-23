@@ -148,7 +148,6 @@ def main():
     if cuda:
         torch.cuda.manual_seed(1337)
 
-
     root = "/home/eivind/Documents/polarlys_datasets"
 
     if resume:
@@ -216,10 +215,15 @@ def main():
             momentum=cfg['momentum'],
             weight_decay=cfg['weight_decay'])
     else:
-        optim = torch.optim.SGD(model.parameters(),
-            lr=cfg['lr'],
-            momentum=cfg['momentum'],
-            weight_decay=cfg['weight_decay'])
+        optim = torch.optim.SGD([
+            {"params": [param for name, param in model.named_parameters() if name[-4:] == "bias"], "lr": 2 * cfg["lr"]},
+            {"params": [param for name, param in model.named_parameters() if name[-4:] != "bias"], "lr": cfg["lr"],
+                "weight_decay": cfg["weight_decay"]}
+            ],  momentum=cfg['momentum'],
+                nesterov=True
+        )
+
+    schedul = torch.optim.lr_scheduler.ReduceLROnPlateau(optim, factor=cfg["lr_decay"], patience=5000)
     if resume:
         optim.load_state_dict(checkpoint['optim_state_dict'])
 
@@ -227,6 +231,7 @@ def main():
         cuda=cuda,
         model=model,
         optimizer=optim,
+        scheduler=schedul,
         train_loader=train_loader,
         val_loader=val_loader,
         out=out,
