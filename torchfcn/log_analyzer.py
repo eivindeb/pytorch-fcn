@@ -72,12 +72,17 @@ class LogAnalyzer:
         plt.title("Histogram for {} in validation on iteration {}".format(metric, iteration))
         plt.show()
 
-    def get_low_scoring_files(self, metric, percentile=1, validation_idx=-1):
-        data = np.asarray(self.data["valid"][validation_idx]["data"]["valid/{}".format(metric)])
+    def get_low_scoring_files(self, metric, percentile=1, mode="min", split="valid", split_idx=-1):
+        data = np.asarray(self.data[split][split_idx]["data"]["{}/{}".format(split, metric)])
+
         N = int(data.size * percentile / 100)
-        res = np.argsort(data)[:N]
-        print(data[res[0]])
-        return [self.data["valid"][-1]["data"]["filename"][i] for i in res]
+
+        if mode == "min":
+            res = np.argsort(data)[:N]
+        elif mode == "max":
+            res = np.argsort(data)[::-1][:N]
+
+        return [self.data[split][split_idx]["data"]["filename"][i] for i in res]
 
 
     def graph_factor(self, factor, x_axis_scale="iteration", include_validation=False, per_class=False, iteration_window=0, reject_outliers=True):
