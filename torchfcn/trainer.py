@@ -62,6 +62,10 @@ class Trainer(object):
             datetime.datetime.now(pytz.timezone('Europe/Oslo'))
         self.size_average = size_average
 
+        if shuffle:
+            train_loader_shuffle = getattr(self.train_loader.dataset, "shuffle_files", None)
+            self.shuffle = train_loader_shuffle is not None and callable(train_loader_shuffle)
+
         if interval_validate is None:
             self.interval_validate = len(self.train_loader)
         else:
@@ -284,12 +288,21 @@ class Trainer(object):
 
         self.optim.zero_grad()
 
-        for batch_idx, batch in tqdm.tqdm(enumerate(self.train_loader), total=len(self.train_loader),
-                desc='Train epoch=%d' % self.epoch, ncols=80, leave=False):
+        if self.shuffle:
+            self.train_loader.dataset.shuffle_files(self.epoch)
+
+        start_idx = self.iteration % len(self.train_loader)
+        if start_idx != 0:
+            print("Resuming from checkpoint during epoch, starting at iteration {}".format(start_idx))
+
+        for batch_idx, batch in tqdm.tqdm(enumerate(self.train_loader.iter_from(start_idx)),
+                                          total=len(self.train_loader) - start_idx,
+                                          desc='Train epoch=%d' % self.epoch, ncols=80,
+                                          leave=False):
             if self.iteration % self.interval_validate == 0 and self.iteration != 0:
                 self.validate()
 
-            if self.interval_checkpoint is not None and self.iteration % self.interval_checkpoint == 0 and self.iteration != 0:
+            if self.interval_checkpoint is not None and self.iteration % self.interval_checkpoint == 0 and self.iteration != 0 and batch_idx != 0:
                 try:
                     torch.save({
                         'out': self.out,
@@ -310,7 +323,6 @@ class Trainer(object):
             data, target = batch[0].cuda(), batch[1].cuda()
             data, target = Variable(data), Variable(target)
             batch_size = len(data)
-            del batch
 
             if self.metadata:
                 metadata = batch[2].cuda()
@@ -324,6 +336,8 @@ class Trainer(object):
                     score, aux = self.model(data)
                 else:
                     score = self.model(data)
+
+            del batch
 
             try:
                 loss = cross_entropy2d(score, target, weight=torch.from_numpy(self.train_loader.dataset.class_weights).float().cuda(),

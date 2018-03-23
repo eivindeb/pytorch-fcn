@@ -23,6 +23,7 @@ from matplotlib import pyplot as plt
 from torchfcn import cc
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from fcn.utils import label2rgb
+import copy
 
 
 """
@@ -177,6 +178,7 @@ class RadarDatasetFolder(data.Dataset):
             self.load_files_from_index(osp.join(self.dataset_folder, self.split) + ".txt")
 
             # TODO: calculate mean and other data and save in dataset folder
+        self.files_initial = copy.copy(self.files[self.split])
 
         try:
             self.read_dataset_stats_from_file()
@@ -540,6 +542,10 @@ class RadarDatasetFolder(data.Dataset):
         self.cache_labels = old_cache_labels
 
         #print("{} data files left after filtering (time: {}, no targets: {})".format(len(filtered_files), filter_stats["Time"], filter_stats["No targets"]))
+
+    def shuffle_files(self, seed):
+        self.files[self.split] = copy.copy(self.files_initial)
+        random.Random(seed).shuffle(self.files[self.split])
 
     def redistribute_set_splits(self, new_split):
         assert(sum(new_split) == 1)
