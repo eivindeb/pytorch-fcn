@@ -60,7 +60,11 @@ class LogAnalyzer:
                 self.data["valid"][-1]["end_time"] = float(row["elapsed_time"])
 
     def validation_metric_histogram(self, metric, validation_idx=-1):
-        data = self.data["valid"][validation_idx]["data"]["valid/{}".format(metric)]
+        try:
+            data = self.data["valid"][validation_idx]["data"]["valid/{}".format(metric)]
+        except Exception as e:
+            print("No data available for selected validation index and metric")
+            raise e
         iteration = self.data["valid"][validation_idx]["iteration"]
         data = np.asarray(data)
         plt.hist(data[~np.isnan(data)], bins=100)
