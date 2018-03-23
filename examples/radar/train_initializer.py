@@ -17,6 +17,7 @@ import ptsemseg.models.pspnet as PSPNet
 import ptsemseg.models.linknet as LinkNet
 import ptsemseg.models.unet as Unet
 import pss.models.psp_net as psp_net
+import pss.models.gcn as gcn
 
 configurations = {
     # same configuration as original work
@@ -24,6 +25,17 @@ configurations = {
     "fcn": dict(
         max_iteration=800000,
         lr=5e-11*0.07,  # the standard learning rate for VOC images (500x375) multiplied by ratio of radar dataset image size (1365x2000)
+        lr_decay=0.1,
+        momentum=0.99,
+        weight_decay=0.0005,
+        interval_validate=30000,
+        interval_checkpoint=500,  # checkpoint every 10 minutes
+        interval_weight_update=1,
+    ),
+    "PSPnet2": dict(
+        max_iteration=800000,
+        lr=5e-11*0.07,  # the standard learning rate for VOC images (500x375) multiplied by ratio of radar dataset image size (1365x2000)
+        lr_decay=0.1,
         momentum=0.99,
         weight_decay=0.0005,
         interval_validate=30000,
@@ -32,14 +44,26 @@ configurations = {
     ),
     "PSPnet": dict(
         max_iteration=800000,
-        lr=5e-11*0.07,  # the standard learning rate for VOC images (500x375) multiplied by ratio of radar dataset image size (1365x2000)
-        momentum=0.99,
-        weight_decay=0.005,
-        interval_validate=10000,
+        lr=1e-10,  # the standard learning rate for VOC images (500x375) multiplied by ratio of radar dataset image size (1365x2000)
+        lr_decay=0.1,
+        momentum=0.9,
+        weight_decay=1e-4,
+        interval_validate=30000,
+        interval_checkpoint=500,  # checkpoint every 10 minutes
+        interval_weight_update=16,
+        pretrained=False,
+    ),
+    "GCN": dict(
+        max_iteration=800000,
+        lr=1e-10,  # the standard learning rate for VOC images (500x375) multiplied by ratio of radar dataset image size (1365x2000)
+        lr_decay=0.1,
+        momentum=0.9,
+        weight_decay=1e-4,
+        interval_validate=10,
         interval_checkpoint=500,  # checkpoint every 10 minutes
         interval_weight_update=1,
+        pretrained=False,
     )
-
 }
 
 
@@ -159,11 +183,13 @@ def main():
     n_class = train_loader.dataset.class_names.size
 
     if model_name == "PSPnet":
-        model = psp_net.PSPNet(num_classes=n_class, pretrained=False)
+        model = psp_net.PSPNet(num_classes=n_class, pretrained=cfg["pretrained"])
     elif model_name == "fcn32s":
         model = torchfcn.models.FCN32s(n_class=n_class, metadata=train_loader.dataset.metadata)
     elif model_name == "fcn8s":
         model = torchfcn.models.FCN8sAtOnce(n_class=n_class, metadata=train_loader.dataset.metadata)
+    elif model_name == "GCN":
+        model = gcn.GCN(num_classes=n_class, pretrained=cfg["pretrained"], input_size=(682, 2000))
 
     start_epoch = 0
     start_iteration = 0
