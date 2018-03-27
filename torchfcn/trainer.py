@@ -394,6 +394,23 @@ class Trainer(object):
 
             self.iteration += 1
 
+            if self.interval_checkpoint is not None and self.iteration % self.interval_checkpoint == 0 and self.iteration != 0 and batch_idx != 0:
+                try:
+                    torch.save({
+                        'out': self.out,
+                        'dataset': self.dataset,
+                        'epoch': self.epoch,
+                        'iteration': self.iteration,
+                        'arch': self.model.__class__.__name__,
+                        'optim_state_dict': self.optim.state_dict(),
+                        'model_state_dict': self.model.state_dict(),
+                        'best_mean_bj': self.best_mean_bj,
+                    }, osp.join(self.out, 'checkpoint.pth.tar'))
+                    print("Successfully saved checkpoint at iteration {}".format(self.iteration))
+                except Exception as e:
+                    self.logger.exception("Could not save checkpoint")
+                    print("Could not save checkpoint")
+
             if self.iteration >= self.max_iter:
                 break
 
