@@ -47,13 +47,14 @@ def cross_entropy2d(input, target, weight=None, size_average=True):
 class Trainer(object):
 
     def __init__(self, cuda, model, optimizer,
-                 train_loader, val_loader, out, max_iter, scheduler=None, train_class_stats=None, shuffle=True,
+                 train_loader, val_loader, out, max_iter, scheduler=None, dataset=None, train_class_stats=None, shuffle=True,
                  size_average=False, interval_validate=None, interval_checkpoint=None, interval_weight_update=None):
         self.cuda = cuda
 
         self.model = model
         self.optim = optimizer
         self.scheduler = scheduler
+        self.dataset = dataset
 
         self.train_loader = train_loader
         self.val_loader = val_loader
@@ -248,6 +249,7 @@ class Trainer(object):
             self.best_mean_bj = mean_bj
         torch.save({
             'out': self.out,
+            'dataset': self.dataset,
             'epoch': self.epoch,
             'iteration': self.iteration,
             'arch': self.model.__class__.__name__,
@@ -306,24 +308,9 @@ class Trainer(object):
                                           total=len(self.train_loader) - start_idx,
                                           desc='Train epoch=%d' % self.epoch, ncols=80,
                                           leave=False):
+
             if self.iteration % self.interval_validate == 0 and self.iteration != 0:
                 self.validate()
-
-            if self.interval_checkpoint is not None and self.iteration % self.interval_checkpoint == 0 and self.iteration != 0 and batch_idx != 0:
-                try:
-                    torch.save({
-                        'out': self.out,
-                        'epoch': self.epoch,
-                        'iteration': self.iteration,
-                        'arch': self.model.__class__.__name__,
-                        'optim_state_dict': self.optim.state_dict(),
-                        'model_state_dict': self.model.state_dict(),
-                        'best_mean_bj': self.best_mean_bj,
-                    }, osp.join(self.out, 'checkpoint.pth.tar'))
-                    print("Successfully saved checkpoint at iteration {}".format(self.iteration))
-                except Exception as e:
-                    self.logger.exception("Could not save checkpoint")
-                    print("Could not save checkpoint")
 
             assert self.model.training
 
@@ -364,9 +351,9 @@ class Trainer(object):
             loss /= batch_size  # average loss over batch
 
             if np.isnan(float(loss.data[0])):
+                print("nan loss")
                 free_memory(locals())
-                filename = self.train_loader.dataset.files["train"][batch_idx]["data"][0]
-                self.logger.warning("Loss was NaN while training\n:image {}".format(filename))
+                self.logger.warning("Loss was NaN while training\n:image {}".format(self.train_loader.dataset.get_filename(batch_idx)))
                 continue  # likely could not load image from nas, just continue
             loss.backward()
 
