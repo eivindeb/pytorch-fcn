@@ -19,9 +19,11 @@ class LogAnalyzer:
             self.data = {"train": [{"data": {}}], "valid": []}
 
             is_validation = False
+            epoch_iteration_start = 0
 
             for i, row in enumerate(reader):
                 if int(row["epoch"]) > len(self.data["train"]) - 1:
+                    epoch_iteration_start = int(row["iteration"])
                     self.data["train"].append({"data": {}})
                 if row["train/loss"] != "" and is_validation:
                     is_validation = False
@@ -33,6 +35,7 @@ class LogAnalyzer:
                     self.data["valid"].append(
                         {"data": {}, "epoch": int(row["epoch"]), "iteration": int(row["iteration"]),
                          "start_time": self.data["train"][-1]["data"]["elapsed_time"][-1], "end_time": None})
+                row_epoch_iteration = int(row["iteration"]) - epoch_iteration_start
                 for key, val in row.items():
                     if val != "" and val is not None:
                         if key in {"iteration", "epoch"}:
@@ -53,7 +56,10 @@ class LogAnalyzer:
                             if key not in self.data[row_cat][-1]["data"]:
                                 self.data[row_cat][-1]["data"].update({key: []})
 
-                            self.data[row_cat][-1]["data"][key].append(val)
+                            try:
+                                self.data[row_cat][-1]["data"][key][row_epoch_iteration] = val
+                            except IndexError:
+                                self.data[row_cat][-1]["data"][key].append(val)
 
             if is_validation:
                 self.data["valid"][-1]["mean"] = {key: val.pop() for key, val in self.data["valid"][-1]["data"].items() if key != "filename"}
