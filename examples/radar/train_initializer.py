@@ -11,6 +11,8 @@ import pytz
 import torch
 import yaml
 
+import time
+
 import torchfcn
 import shutil
 import ptsemseg.models.pspnet as PSPNet
@@ -18,6 +20,7 @@ import ptsemseg.models.linknet as LinkNet
 import ptsemseg.models.unet as Unet
 import pss.models.psp_net as psp_net
 import pss.models.gcn as gcn
+from ml.pytorch_refinenet.pytorch_refinenet.refinenet import RefineNet4CascadePoolingImproved as RefineNet
 
 configurations = {
     # same configuration as original work
@@ -55,15 +58,26 @@ configurations = {
     ),
     "GCN": dict(
         max_iteration=800000,
-        lr=1e-10,  # the standard learning rate for VOC images (500x375) multiplied by ratio of radar dataset image size (1365x2000)
+        lr=1e-17,  # the standard learning rate for VOC images (500x375) multiplied by ratio of radar dataset image size (1365x2000)
         lr_decay=0.1,
         momentum=0.9,
         weight_decay=1e-4,
-        interval_validate=10,
+        interval_validate=30000,
+        interval_checkpoint=500,  # checkpoint every 10 minutes
+        interval_weight_update=16,
+        pretrained=False,
+    ),
+    "RefineNet": dict(
+        max_iteration=800000,
+        lr=7e-11,  # the standard learning rate for VOC images (500x375) multiplied by ratio of radar dataset image size (1365x2000)
+        lr_decay=0.1,
+        momentum=0.9,
+        weight_decay=1e-4,
+        interval_validate=30000,
         interval_checkpoint=500,  # checkpoint every 10 minutes
         interval_weight_update=1,
         pretrained=False,
-    )
+    ),
 }
 
 
@@ -123,14 +137,16 @@ here = osp.dirname(osp.abspath(__file__))
 
 
 def main():
-    model_name = "PSPnet"
-    dataset_name = "2018"
+    model_name = "RefineNet"
+    dataset_name = "test"
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', type=int, default=1,
                         choices=configurations.keys())
     parser.add_argument('--resume', help='Checkpoint path')
     args = parser.parse_args()
+
+    resume = args.resume
 
     if "fcn" in model_name:
         fcn = True
@@ -139,23 +155,25 @@ def main():
         fcn = False
         model_cfg = model_name
 
-    cfg = configurations[model_cfg]#configurations[args.config]
-    out = get_log_dir(model_name, cfg)
-    resume = args.resume
-    cuda = torch.cuda.is_available()
-
-    torch.manual_seed(1337)
-    if cuda:
-        torch.cuda.manual_seed(1337)
-
     root = "/home/eivind/Documents/polarlys_datasets"
 
     if resume:
         checkpoint = torch.load(resume)
         out = checkpoint['out']
+        dataset_name = checkpoint.get("dataset_name", "test")
+        with open(osp.join(out, "config.yaml"), 'r') as f:
+            cfg = yaml.load(f)
         dataset_cfg = osp.join(out, "polarlys_cfg.txt")
     else:
         dataset_cfg = osp.join(root, "polarlys_cfg.txt")
+        cfg = configurations[model_cfg]#configurations[args.config]
+        out = get_log_dir(model_name, cfg)
+
+    cuda = torch.cuda.is_available()
+
+    torch.manual_seed(1337)
+    if cuda:
+        torch.cuda.manual_seed(1337)
 
     # 1. dataset
 
@@ -166,17 +184,28 @@ def main():
     data_folder = "/nas0/"
     #data_folder = root
 
+    if model_name == "PSPnet":
+        radar_kwargs = {"train": {"height_divisions": 7, "width_divisions": 0}, "valid": {"height_divisions": 1, "width_divisions": 0}}
+    elif fcn:
+        radar_kwargs = {"train": {"height_divisions": 2, "width_divisions": 0}, "valid": {"height_divisions": 1, "width_divisions": 0}}
+    elif model_name == "GCN":
+        radar_kwargs = {"train": {"height_divisions": 5, "width_divisions": 0, "overlap": 0}}
+        radar_kwargs.update({"valid": radar_kwargs["train"]})
+    elif model_name == "RefineNet":
+        radar_kwargs = {"train": {"height_divisions": 5, "width_divisions": 0, "overlap": 0, "image_height": 4032, "image_width": 1984}}
+        radar_kwargs.update({"valid": radar_kwargs["train"]})
 
     kwargs = {'num_workers': 8, 'pin_memory': True} if cuda else {}
+
     train_loader = torch.utils.data.DataLoader(
         torchfcn.datasets.RadarDatasetFolder(
-            root, split='train', cfg=dataset_cfg, transform=True, dataset_name="2018"),
-        batch_size=1, shuffle=True, **kwargs)
-    val_loader = torch.utils.data.DataLoader(
-        torchfcn.datasets.RadarDatasetFolder(
-            root, split='valid', cfg=dataset_cfg, transform=True, dataset_name="2018"),
+            root, split='train', cfg=dataset_cfg, transform=True, dataset_name=dataset_name, **radar_kwargs["train"]),
         batch_size=1, shuffle=False, **kwargs)
 
+    val_loader = torch.utils.data.DataLoader(
+        torchfcn.datasets.RadarDatasetFolder(
+            root, split='valid', cfg=dataset_cfg, transform=True, dataset_name=dataset_name, min_data_interval=60*5, **radar_kwargs["valid"]),
+        batch_size=1, shuffle=False, **kwargs)
     # 2. model
 
     n_class = train_loader.dataset.class_names.size
@@ -189,6 +218,8 @@ def main():
         model = torchfcn.models.FCN8sAtOnce(n_class=n_class, metadata=train_loader.dataset.metadata)
     elif model_name == "GCN":
         model = gcn.GCN(num_classes=n_class, pretrained=cfg["pretrained"], input_size=(682, 2000))
+    elif model_name == "RefineNet":
+        model = RefineNet((1, 1024, 1984), num_classes=n_class, pretrained=False, freeze_resnet=False)
 
     start_epoch = 0
     start_iteration = 0
@@ -236,6 +267,7 @@ def main():
         val_loader=val_loader,
         out=out,
         max_iter=cfg['max_iteration'],
+        dataset=dataset_name,
         train_class_stats={"acc_cls": [1], "iu": list(range(n_class))},
         interval_validate=cfg.get('interval_validate', len(train_loader)),
         interval_checkpoint=cfg.get("interval_checkpoint", None),
