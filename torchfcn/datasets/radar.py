@@ -67,7 +67,7 @@ class RadarDatasetFolder(data.Dataset):
     LABEL_SOURCE = {"ais": 1, "chart": 2}
     LABELS = {"background": 0, "vessel": 1, "land": 2, "unknown": 3, "islet": 4, "unlabeled": -1}
 
-    def __init__(self, root, dataset_name, cfg, split='train', transform=False):
+    def __init__(self, root, dataset_name, cfg, split='train', transform=False, **kwargs):
         self.root = root
         self.split = split
         self._transform = transform
@@ -123,13 +123,19 @@ class RadarDatasetFolder(data.Dataset):
         self.chart_area_threshold = config["Parameters"].getint("ChartAreaThreshold", 10000)
         self.min_vessel_land_dist = config["Parameters"].getfloat("MinVesselLandDistance", 10)
 
-        height_divisons = config["Parameters"].getint("HeightDivisions", 2)
-        width_divisons = config["Parameters"].getint("WidthDivisions", 0)
-        overlap = config["Parameters"].getint("Overlap", 20)
+        self.height_divisions = config["Parameters"].getint("HeightDivisions", 2)
+        self.width_divisions = config["Parameters"].getint("WidthDivisions", 0)
+        self.overlap = config["Parameters"].getint("Overlap", 20)
+
+        for var, val in kwargs.items():
+            if hasattr(self, var):
+                setattr(self, var, val)
+            else:
+                raise TypeError("Unrecognized keyword argument: {}".format(var))
 
         self.metadata = True if self.include_weather_data else False
 
-        self.set_data_ranges(height_divisons, width_divisons, overlap=overlap)
+        self.set_data_ranges(self.height_divisions, self.width_divisions, overlap=self.overlap)
 
         if sum(self.set_splits) != 1:
             print("Desired set split does not sum to 1, instead {}".format(sum(self.set_splits)))
