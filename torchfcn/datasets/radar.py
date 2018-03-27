@@ -402,16 +402,20 @@ class RadarDatasetFolder(data.Dataset):
 
         if self.min_data_interval > 0:
             self.files[self.split] = sorted(self.files[self.split], key=lambda x: datetime.datetime.strptime(
-                x["data"][0].split("/")[-1].replace(".bmp", ""),
+                x["data"].split("/")[-1].replace(".bmp", ""),
                 "%Y-%m-%d-%H_%M_%S"))
             last_time = {radar_type: datetime.datetime(year=2000, month=1, day=1) for radar_type in self.radar_types}
 
             new_files = []
 
             for file_info in self.files[self.split]:
-                file = file_info["data"][0]
+                file = file_info["data"]
                 file_time = datetime.datetime.strptime(file.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S")
                 file_radar_type = file.split("/")[-2]
+
+                if file_time == last_time[file_radar_type]:  # different range of same image
+                    new_files.append(file_info)
+                    continue
 
                 if file_time - last_time[file_radar_type] > datetime.timedelta(seconds=self.min_data_interval):
                     last_time[file_radar_type] = file_time
