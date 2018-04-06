@@ -137,6 +137,9 @@ class RadarDatasetFolder(data.Dataset):
 
         self.metadata = True if self.include_weather_data else False
 
+        if self.metadata:
+            self.metadata_stats = dict()
+
         self.set_data_ranges(self.height_divisions, self.width_divisions, overlap=self.overlap)
 
         if sum(self.set_splits) != 1:
@@ -186,14 +189,19 @@ class RadarDatasetFolder(data.Dataset):
             self.load_files_from_index(osp.join(self.dataset_folder, self.split) + ".txt")
 
             # TODO: calculate mean and other data and save in dataset folder
-        self.files_initial = copy.copy(self.files[self.split])
 
         try:
             self.read_dataset_stats_from_file()
         except (IOError, MissingStatsError) as e:
             print(e)
-            self.mean_bgr = np.array([59.06010940426199])
-            #self.calculate_dataset_stats()
+            if type(e) is IOError:
+                self.calculate_dataset_stats(mode="data")
+                if self.metadata:
+                    self.calculate_dataset_stats(mode="metadata")
+            else:
+                self.mean_bgr = np.array([59.06010940426199])  # temporary
+                if self.metadata:
+                    raise e
 
     def __len__(self):
         return len(self.files[self.split])
@@ -246,7 +254,15 @@ class RadarDatasetFolder(data.Dataset):
         lbl = torch.from_numpy(lbl).long()
         if metadata is not None:
             try:
-                metadata = torch.from_numpy(np.asarray([val for key, val in sorted(metadata.items())])).float()
+                met_vals = []
+                new_max, new_min = 1, -1
+                for key, val in sorted(metadata.items()):
+                    if "[deg]" in key:
+                        val = math.cos(val)
+                    old_range = self.metadata_stats[key]["max"] - self.metadata_stats[key]["min"]
+                    new_range = new_max - new_min
+                    met_vals.append((((val - self.metadata_stats[key]["min"]) * new_range) / old_range) + new_min)
+                metadata = torch.from_numpy(np.asarray(met_vals)).float()
             except RuntimeError:  # no metadata?
                 self.logger.exception("Runtime error when processing metadata")
                 metadata = torch.zeros(14).float()
@@ -347,23 +363,47 @@ class RadarDatasetFolder(data.Dataset):
 
         return None
 
-    def calculate_dataset_stats(self):
-        dataset_mean = self.get_mean()
-        self.mean_bgr = dataset_mean
+    def calculate_dataset_stats(self, mode="data"):
         config = ConfigParser()
+        config.optionxform = str
         config.read(osp.join(self.dataset_folder, "stats.txt"))
-        config["Training"]["MeanBackground"] = dataset_mean
+        if mode == "data":
+            if "Training" not in config.sections():
+                config["Training"] = {}
+            dataset_mean = self.get_mean()
+            self.mean_bgr = dataset_mean
+            config["Training"]["MeanBackground"] = dataset_mean
+        elif mode == "metadata":
+            if "Metadata" not in config.sections():
+                config["Metadata"] = {}
+            self.metadata_stats = self.get_metadata_stats()
+            for key, val in self.metadata_stats.items():
+                config["Metadata"][key] = "{},{},{}".format(val["min"], val["max"], val["mean"])
         with open(osp.join(self.dataset_folder, "stats.txt"), 'w') as cfgout:
             config.write(cfgout)
 
 
     def read_dataset_stats_from_file(self):
         config = ConfigParser()
+        config.optionxform = str
         with open(osp.join(self.dataset_folder, "stats.txt"), 'r') as stats_cfg:
             config.read_file(stats_cfg)
             self.mean_bgr = config["Training"].getfloat("MeanBackground")
             if self.mean_bgr is None:
-                raise MissingStatsError
+                self.calculate_dataset_stats(mode="data")
+
+            if self.metadata:
+                if "Metadata" not in config.sections():
+                    self.calculate_dataset_stats(mode="metadata")
+                else:
+                    try:
+                        for key, val in config["Metadata"].items():
+                            val_min, val_max, val_mean = val.split(",")
+                            val_min, val_max, val_mean = float(val_min), float(val_max), float(val_mean)
+                            self.metadata_stats.update({key: {"min": val_min, "max": val_max, "mean": val_mean}})
+                    except:
+                        raise MissingStatsError("Metadata statistics are wrongly formatted, should be: key = min, max, mean\n is: {} = {}".format(key, val))
+
 
 
     def reload_files_from_default_index(self):
@@ -617,6 +657,41 @@ class RadarDatasetFolder(data.Dataset):
                     valid_index.write(file)
                 else:
                     test_index.write(file)
+
+    def get_metadata_stats(self):
+        if "train" not in self.files:
+            self.load_files_from_index(osp.join(self.dataset_folder, "train.txt"))
+
+        metadata_stats = {}
+        processed_files = set()
+
+        for i, entry in tqdm.tqdm(enumerate(self.files["train"]), total=len(self.files["train"]),
+                              desc="Calculating statistics for metadata"):
+            if entry["data"] in processed_files:
+                continue
+
+            try:
+                metadata = self.get_weather_data(entry["data"])
+            except MetadataNotFound:
+                continue
+            for key, val in metadata.items():
+                if "[deg]" in key:
+                    val = math.cos(val)
+                if key not in metadata_stats:
+                    metadata_stats.update({key: {"min": val, "max": val, "mean": val}})
+                else:
+                    if val < metadata_stats[key]["min"]:
+                        metadata_stats[key]["min"] = val
+                    if val > metadata_stats[key]["max"]:
+                        metadata_stats[key]["max"] = val
+                    metadata_stats[key]["mean"] += val
+
+            processed_files.add(entry["data"])
+                    
+        for val in metadata_stats.values():
+            val["mean"] = val["mean"] / len(processed_files)
+
+        return metadata_stats
 
     def get_mean(self):
         mean_sum = 0
