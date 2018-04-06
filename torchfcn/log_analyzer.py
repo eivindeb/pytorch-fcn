@@ -92,7 +92,7 @@ class LogAnalyzer:
 
 
     def graph_factor(self, factor, x_axis_scale="iteration", include_validation=False, per_class=False, iteration_window=0, reject_outliers=True):
-        train_factors = [f for d in self.data["train"] for f in d["data"] if "train/{}".format(factor) in f]
+        train_factors = {f for d in self.data["train"] for f in d["data"] if "train/{}".format(factor) in f}
         #train_factors = {"train/{}".format(factor): []}
         include_training = any(any(t_f in d["data"] for t_f in train_factors) for d in self.data["train"])
         if include_training:
