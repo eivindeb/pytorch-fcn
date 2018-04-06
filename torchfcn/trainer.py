@@ -64,8 +64,9 @@ class Trainer(object):
         self.size_average = size_average
 
         if shuffle:
-            train_loader_shuffle = getattr(self.train_loader.dataset, "shuffle_files", None)
+            train_loader_shuffle = getattr(self.train_loader.dataset, "shuffle", None)
             self.shuffle = train_loader_shuffle is not None and callable(train_loader_shuffle)
+
 
         if interval_validate is None:
             self.interval_validate = len(self.train_loader)
@@ -298,7 +299,7 @@ class Trainer(object):
         self.optim.zero_grad()
 
         if self.shuffle:
-            self.train_loader.dataset.shuffle_files(self.epoch)
+            self.train_loader.dataset.shuffle(self.epoch)
 
         start_idx = self.iteration % len(self.train_loader)
         if start_idx != 0:
