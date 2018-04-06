@@ -417,10 +417,9 @@ class RadarDatasetFolder(data.Dataset):
                 lines = [line for line in lines if line != "removed"]
                 file.writelines(lines)
 
+        self.sort_chronologically()
+
         if self.min_data_interval > 0:
-            self.files[self.split] = sorted(self.files[self.split], key=lambda x: datetime.datetime.strptime(
-                x["data"].split("/")[-1].replace(".bmp", ""),
-                "%Y-%m-%d-%H_%M_%S"))
             last_time = {radar_type: datetime.datetime(year=2000, month=1, day=1) for radar_type in self.radar_types}
 
             new_files = []
@@ -576,9 +575,18 @@ class RadarDatasetFolder(data.Dataset):
 
         #print("{} data files left after filtering (time: {}, no targets: {})".format(len(filtered_files), filter_stats["Time"], filter_stats["No targets"]))
 
-    def shuffle_files(self, seed):
-        self.files[self.split] = copy.copy(self.files_initial)
+    def shuffle(self, seed):
+        self.sort_chronologically(split=self.split)
+
         random.Random(seed).shuffle(self.files[self.split])
+
+    def sort_chronologically(self, split=None):
+        if split is None:
+            split = self.split
+
+        self.files[self.split] = sorted(self.files[self.split], key=lambda x: (datetime.datetime.strptime(
+            x["data"].split("/")[-1].replace(".bmp", ""),
+            "%Y-%m-%d-%H_%M_%S"), x["range"]))
 
     def redistribute_set_splits(self, new_split):
         assert(sum(new_split) == 1)
