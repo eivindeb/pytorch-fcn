@@ -886,7 +886,7 @@ class RadarDatasetFolder(data.Dataset):
                 elif "islet" in self.class_names:
                     label[chart_classified == self.LABELS["islet"]] = self.LABELS["islet"]
                 else:
-                    label[chart_classified == self.LABELS["land"]] = self.LABELS["land"]
+                    label[chart_classified != 0] = self.LABELS["land"]
 
                 if "unknown" in self.class_names:
                     label[(chart_classified == 0) & (chart_data == 1) & (hidden_by_land_mask == 1)] = self.LABELS["unknown"]
