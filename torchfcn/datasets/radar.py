@@ -24,6 +24,7 @@ from torchfcn import cc
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from fcn.utils import label2rgb
 import copy
+import math
 
 
 """
@@ -122,6 +123,7 @@ class RadarDatasetFolder(data.Dataset):
         self.include_weather_data = config["Parameters"].getboolean("IncludeWeatherData", False)
         self.chart_area_threshold = config["Parameters"].getint("ChartAreaThreshold", 10000)
         self.min_vessel_land_dist = config["Parameters"].getfloat("MinVesselLandDistance", 10)
+        self.min_own_velocity = config["Parameters"].getfloat("MinOwnVelocity", 1)
 
         self.height_divisions = config["Parameters"].getint("HeightDivisions", 2)
         self.width_divisions = config["Parameters"].getint("WidthDivisions", 0)
@@ -275,12 +277,27 @@ class RadarDatasetFolder(data.Dataset):
             raise DataFileNotFound
         return img
 
-    def get_weather_data(self, data_path):
+    def get_metadata(self, data_path):
         basename = osp.splitext(data_path)[0]
         t = self.data_loader.get_time_from_basename(basename)
         sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
 
         meta_data = self.data_loader.get_metadata(t, sensor, sensor_index)
+
+        if not meta_data:
+            raise MetadataNotFound("Metadata not found for {}".format(data_path))
+
+        return meta_data
+
+    def get_own_vessel_velocity(self, data_path, vector=False):
+        vel = self.get_metadata(data_path)["own_vessel_end"]["velocity"]
+        if vector:
+            return vel
+
+        return math.sqrt(sum(v ** 2 for v in vel))
+
+    def get_weather_data(self, data_path):
+        meta_data = self.get_metadata(data_path)
 
         try:
             return {key: float(val) for key, val in meta_data["weather"].items()}
@@ -494,6 +511,10 @@ class RadarDatasetFolder(data.Dataset):
                             filter_stats["Time"] += 1
                             continue
 
+                        if self.min_own_velocity > 0 and self.get_own_vessel_velocity(file) < self.min_own_velocity:
+                            filter_stats["Velocity"] += 1
+                            continue
+
                         ais_targets = self.get_ais_targets(file)
 
                         if self.remove_files_without_targets and file not in files_with_targets:
@@ -541,7 +562,9 @@ class RadarDatasetFolder(data.Dataset):
                             continue
 
                         last_time[file_radar_type] = file_time
-                        index.write("{};{}\n".format(file, self.ais_targets_to_string(ais_targets)))
+                        index.write("{};{}\n".format(osp.relpath(file, start=self.data_folder), self.ais_targets_to_string(ais_targets)))
+                        index.flush()
+                        print("Added {} to dataset".format(file))
 
                     except Exception as e:  # temporary
                         self.logger.exception("An exception occured while processing images, skipping.\nimage {}".format(file))
