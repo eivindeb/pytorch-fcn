@@ -480,29 +480,21 @@ class RadarDatasetFolder(data.Dataset):
             self.files[self.split] = new_files
 
     def update_dataset_file(self, from_time=None, to_time=None):
-        def collect_data_files_recursively(parent, filenames=None):
-            if filenames is None:
-                filenames = []
-                to_search = tqdm.tqdm(listdir(parent), desc="Searching for data files", total=len(listdir(parent)), leave=False)
-            else:
-                to_search = listdir(parent)
-
-            for child in to_search:
+        def collect_data_files_recursively(parent):
+            for child in sorted(listdir(parent)):
                 if re.match("^[0-9-]*$", child):
                     if from_time is None and to_time is None or len(child) == 10:
-                        filenames = collect_data_files_recursively(osp.join(parent, child), filenames)
+                        yield from collect_data_files_recursively(osp.join(parent, child))
                     else:
                         child_datetime = datetime.datetime.strptime(child, "%Y-%m-%d{}".format("-%H" if len(child) > 10 else ""))
                         if from_time is not None and to_time is not None and from_time <= child_datetime <= to_time:
-                            filenames = collect_data_files_recursively(osp.join(parent, child), filenames)
+                            yield from collect_data_files_recursively(osp.join(parent, child))
                         elif from_time is None and child_datetime <= to_time or to_time is None and child_datetime >= from_time:
-                            filenames = collect_data_files_recursively(osp.join(parent, child), filenames)
+                            yield from collect_data_files_recursively(osp.join(parent, child))
                 elif child in self.radar_types:
-                    filenames = collect_data_files_recursively(osp.join(parent, child), filenames)
+                    yield from collect_data_files_recursively(osp.join(parent, child))
                 elif child.endswith(".bmp"):
-                    filenames.append(osp.join(parent, child))
-
-            return filenames
+                    yield osp.join(parent, child)
 
         splits = ["train", "valid", "test"]
         splits.remove(self.split)
@@ -520,14 +512,7 @@ class RadarDatasetFolder(data.Dataset):
 
         old_cache_labels = self.cache_labels
 
-        files = collect_data_files_recursively(self.data_folder)
-        print("Found {} data files".format(len(files)))
-
-        files = [osp.relpath(file, start=self.data_folder) for file in files if file not in dataset_files]
-
-        sorted_files = sorted(files, key=lambda x: datetime.datetime.strptime(x.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S"))
-
-        filter_stats = {"Time": 0, "No targets": 0, "Missing data": 0}
+        filter_stats = {"Time": 0, "No targets": 0, "Missing data": 0, "Velocity": 0}
 
         with open(osp.join(self.root, "processed_files.txt"), "a+") as processed_files_index:
             lines = processed_files_index.readlines()
@@ -538,9 +523,12 @@ class RadarDatasetFolder(data.Dataset):
             #last_processed_time = datetime.datetime.strptime(last_processed, "%Y-%m-%d-%H_%M_%S")
             last_time = {radar_type: datetime.datetime(year=2000, month=1, day=1) for radar_type in self.radar_types}
             with open(osp.join(self.dataset_folder, self.split + ".txt"), "a") as index:
-                for file in tqdm.tqdm(sorted_files, total=len(sorted_files), desc="Filtering data files", leave=False):
+                for file in tqdm.tqdm(collect_data_files_recursively(self.data_folder), desc="Filtering data files", leave=False):
                     try:
                         if self.skip_processed_files and (file in files_without_targets or file in files_with_targets):
+                            continue
+
+                        if file in dataset_files:
                             continue
 
                         file_time = datetime.datetime.strptime(file.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S")
