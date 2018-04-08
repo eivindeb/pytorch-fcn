@@ -194,30 +194,35 @@ def main():
     elif model_name == "RefineNet":
         radar_kwargs = {"train": {"height_divisions": 5, "width_divisions": 0, "overlap": 0, "image_height": 4032, "image_width": 1984}}
         radar_kwargs.update({"valid": radar_kwargs["train"]})
-
+    elif model_name == "LinkNet":
+        radar_kwargs = {"train": {"height_divisions": 5, "width_divisions": 0, "overlap": 0}}
+        radar_kwargs.update({"valid": radar_kwargs["train"]})
     kwargs = {'num_workers': 8, 'pin_memory': True} if cuda else {}
 
     train_loader = torch.utils.data.DataLoader(
         torchfcn.datasets.RadarDatasetFolder(
-            root, split='train', cfg=dataset_cfg, transform=True, dataset_name=dataset_name, **radar_kwargs["train"]),
+            root, split='train', cfg=dataset_cfg, transform=True, dataset_name=dataset_name, min_data_interval=10, **radar_kwargs["train"]),
         batch_size=1, shuffle=False, **kwargs)
 
     val_loader = torch.utils.data.DataLoader(
         torchfcn.datasets.RadarDatasetFolder(
             root, split='valid', cfg=dataset_cfg, transform=True, dataset_name=dataset_name, min_data_interval=60*5, **radar_kwargs["valid"]),
         batch_size=1, shuffle=False, **kwargs)
+
     # 2. model
 
     n_class = train_loader.dataset.class_names.size
 
     if model_name == "PSPnet":
-        model = psp_net.PSPNet(num_classes=n_class, pretrained=cfg["pretrained"])
+        model = psp_net.PSPNet(num_classes=n_class, pretrained=cfg["pretrained"], metadata_channels=14 if train_loader.dataset.metadata else 0)
     elif model_name == "fcn32s":
         model = torchfcn.models.FCN32s(n_class=n_class, metadata=train_loader.dataset.metadata)
     elif model_name == "fcn8s":
         model = torchfcn.models.FCN8sAtOnce(n_class=n_class, metadata=train_loader.dataset.metadata)
     elif model_name == "GCN":
         model = gcn.GCN(num_classes=n_class, pretrained=cfg["pretrained"], input_size=(682, 2000))
+    elif model_name == "LinkNet":
+        model = LinkNet(n_classes=n_class, in_channels=1)
     elif model_name == "RefineNet":
         model = RefineNet((1, 1024, 1984), num_classes=n_class, pretrained=False, freeze_resnet=False)
 
