@@ -125,6 +125,7 @@ class RadarDatasetFolder(data.Dataset):
         self.min_vessel_land_dist = config["Parameters"].getfloat("MinVesselLandDistance", 10)
         self.min_own_velocity = config["Parameters"].getfloat("MinOwnVelocity", 1)
         self.downsampling_factor = config["Parameters"].getint("DownsamplingFactor", 1)
+        self.image_mode = config["Parameters"].get("ImageMode", "Grayscale")
 
         self.height_divisions = config["Parameters"].getint("HeightDivisions", 2)
         self.width_divisions = config["Parameters"].getint("WidthDivisions", 0)
@@ -253,7 +254,10 @@ class RadarDatasetFolder(data.Dataset):
     def transform(self, img, lbl, metadata=None):
         img = img.astype(np.float64)
         img -= self.mean_bgr
-        img = np.expand_dims(img, axis=0)
+        if self.image_mode == "Grayscale":
+            img = np.expand_dims(img, axis=0)
+        else:
+            img = np.stack((img,) * 3, -1)
         img = torch.from_numpy(img).float()
         lbl = torch.from_numpy(lbl).long()
         if metadata is not None:
