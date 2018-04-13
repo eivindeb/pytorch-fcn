@@ -129,6 +129,62 @@ def boundary_jaccard(lbl_true, lbl_pred, classes=None):
     return bjs
 
 
+class CFARModule(nn.Module):
+    def __init__(self, guard_band_size, reference_band_size, alpha):
+        super(CFARModule, self).__init__()
+        self.reference_band = reference_band_size
+        self.guard_band = guard_band_size
+        self.alpha = alpha
+        self.pad = reference_band_size + guard_band_size
+        self.filter = nn.Sequential(
+                                nn.Conv2d(in_channels=1, out_channels=1,
+                                    kernel_size=2*(guard_band_size + reference_band_size) + 1,
+                                    padding=0
+                                        ),
+                                nn.BatchNorm2d(1)
+        )
+        self.initialize_weights()
+
+    # TODO: scale output or batchnorm? check that loading of parameters works, add support for freezing
+
+    def forward(self, x):
+        x = self.filter(x)
+        return torch.nn.functional.pad(x, (self.pad, self.pad, self.pad, self.pad), "constant", 0)
+
+    def initialize_weights(self):
+        filter_size = 2 * (self.guard_band + self.reference_band) + 1
+        weights = torch.FloatTensor(1, 1, filter_size, filter_size).uniform_(-1.01, -0.99)
+        weights[0, 0, self.reference_band:filter_size - self.reference_band,
+        self.reference_band:filter_size - self.reference_band].uniform_(0, 0.001)
+        weights[0, 0, filter_size // 2, filter_size // 2] = abs(weights.sum()) / self.alpha
+
+        self.filter.weight = torch.nn.Parameter(weights)
+
+
+class MetadataModule(nn.Module):
+    def __init__(self, in_features, out_features):
+        super(MetadataModule, self).__init__()
+        self.network = nn.Sequential(
+            nn.Linear(in_features, in_features),
+            nn.ReLU(inplace=True),
+            nn.Linear(in_features, in_features),
+            nn.ReLU(inplace=True),
+            nn.Linear(in_features, in_features),
+            nn.ReLU(inplace=True),
+            nn.Linear(in_features, in_features),
+            nn.ReLU(inplace=True),
+            nn.Linear(in_features, in_features),
+            nn.ReLU(inplace=True),
+            nn.Linear(in_features, in_features),
+            nn.ReLU(inplace=True),
+            nn.Linear(in_features, out_features),
+            nn.ReLU(inplace=True)
+        )
+
+    def forward(self, x):
+        return self.network(x)
+
+
 def flatten(l):
     for el in l:
         try:
