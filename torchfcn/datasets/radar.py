@@ -124,6 +124,7 @@ class RadarDatasetFolder(data.Dataset):
         self.chart_area_threshold = config["Parameters"].getint("ChartAreaThreshold", 10000)
         self.min_vessel_land_dist = config["Parameters"].getfloat("MinVesselLandDistance", 10)
         self.min_own_velocity = config["Parameters"].getfloat("MinOwnVelocity", 1)
+        self.downsampling_factor = config["Parameters"].getint("DownsamplingFactor", 1)
 
         self.height_divisions = config["Parameters"].getint("HeightDivisions", 2)
         self.width_divisions = config["Parameters"].getint("WidthDivisions", 0)
@@ -217,6 +218,9 @@ class RadarDatasetFolder(data.Dataset):
             indexes = list(range(len(self)))
             indexes.remove(index)
             return self.__getitem__(random.choice(indexes))
+
+        if self.downsampling_factor > 1:
+            img = cv2.resize(img, None, fx=1 / self.downsampling_factor, fy=1 / self.downsampling_factor, interpolation=cv2.INTER_AREA)
 
         # load label
         try:
@@ -430,6 +434,7 @@ class RadarDatasetFolder(data.Dataset):
                     line_edited = True
                 else:
                     target_locations = self.ais_targets_string_to_list(target_locations_string)
+                    target_locations = [[loc[0] / self.downsampling_factor, loc[1] / self.downsampling_factor] for loc in target_locations]
 
                     for i, data_range in enumerate(self.data_ranges):
                         if target_locations is None:  # ais target data missing, TODO: actually have to check if targets are hidden...
@@ -442,7 +447,7 @@ class RadarDatasetFolder(data.Dataset):
 
                             line = line[:edit_pos + 1] + ais_targets_string
 
-                        if not self.remove_files_without_targets or any(self.point_in_range(target, data_range, margin=30) for target in target_locations):
+                        if not self.remove_files_without_targets or any(self.point_in_range(target, data_range, margin=30 / self.downsampling_factor) for target in target_locations):
                             self.files[self.split].append({ "data": self.get_data_path(filename),
                                                             "label": self.get_label_path(filename) if self.cache_labels else None,
                                                             "range": i
@@ -836,6 +841,26 @@ class RadarDatasetFolder(data.Dataset):
                     self.files[self.split][index]["label"] = save_path
 
         label = label[:self.image_height, :self.image_width]  # TODO: maybe take in data range?
+
+        if self.downsampling_factor > 1:
+            label[label == self.LABEL_SOURCE["ais"]] = self.LABELS["background"]
+            label = cv2.resize(label.astype(np.uint8), None, fx=1 / self.downsampling_factor, fy=1 / self.downsampling_factor, interpolation=cv2.INTER_AREA)
+            label = label.astype(np.int32)  # cv2.resize does not work with int32 for some reason
+
+            basename = osp.splitext(data_path)[0]
+            t = self.data_loader.get_time_from_basename(basename)
+            sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
+            scaled_ais_layer = self.data_loader.load_ais_layer_sensor(t, sensor, sensor_index, scale= 1 / self.downsampling_factor, binary=True)
+            if scaled_ais_layer is None:
+                self.logger.warning("Scaled AIS data could not be gathered for {}".format(self.data_path_to_rel_label_path(data_path)))
+                raise LabelSourceMissing
+
+            scaled_range = [scaled_ais_layer.shape[0] - round((scaled_ais_layer.shape[0] * 3 - self.image_height) / 3),
+                            scaled_ais_layer.shape[1] - round((scaled_ais_layer.shape[1] * 3 - self.image_width) / 3)]
+            scaled_ais_layer = scaled_ais_layer[:scaled_range[0], :scaled_range[1]]
+
+            label[scaled_ais_layer == 1] = self.LABEL_SOURCE["ais"]
+
         # Process label source data
         if "vessel" in self.class_names:
             label[label == self.LABEL_SOURCE["ais"]] = self.LABELS["vessel"]
@@ -874,7 +899,10 @@ class RadarDatasetFolder(data.Dataset):
 
             if "land" in self.class_names or "islet" in self.class_names:
                 if data is None:
-                    data = self.load_image(data_path)[:label.shape[0], :label.shape[1]]
+                    data = self.load_image(data_path)
+
+                    if self.downsampling_factor > 1:
+                        data = cv2.resize(data, None, fx=1 / self.downsampling_factor, fy=1 / self.downsampling_factor, interpolation=cv2.INTER_AREA)[:label.shape[0],:label.shape[1]]
                 else:
                     data = data[:label.shape[0], :label.shape[1]]
 
@@ -1060,8 +1088,8 @@ class RadarDatasetFolder(data.Dataset):
             raise ValueError
 
         self.data_ranges = []
-        h_step_size = int(self.image_height / (height_division_count + 1))
-        w_step_size = int(self.image_width / (width_division_count + 1))
+        h_step_size = int(round(self.image_height / self.downsampling_factor) / (height_division_count + 1))
+        w_step_size = int(round(self.image_width / self.downsampling_factor) / (width_division_count + 1))
 
         for i in range(height_division_count + 1):
             for j in range(width_division_count + 1):
