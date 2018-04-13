@@ -818,7 +818,7 @@ class RadarDatasetFolder(data.Dataset):
             sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
             ais = self.data_loader.load_ais_layer_sensor(t, sensor, sensor_index)
 
-            if isinstance(ais, list):
+            if ais is None:
                 self.logger.warning("AIS data could not be gathered for {}".format(self.data_path_to_rel_label_path(data_path)))
                 raise LabelSourceMissing
             else:
@@ -827,7 +827,7 @@ class RadarDatasetFolder(data.Dataset):
             if not {"land", "islet", "unknown"}.isdisjoint(self.class_names) or self.unlabel_chart_data:
                 chart = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, binary=True, only_first_range_step=True if self.image_width <= 2000 else False)
 
-                if isinstance(chart, list):
+                if chart is None:
                     self.logger.warning("Chart data could not be gathered for {}".format(self.data_path_to_rel_label_path(data_path)))
                     raise LabelSourceMissing
                 else:
