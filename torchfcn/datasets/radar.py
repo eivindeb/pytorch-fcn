@@ -848,7 +848,7 @@ class RadarDatasetFolder(data.Dataset):
 
         if self.downsampling_factor > 1:
             label[label == self.LABEL_SOURCE["ais"]] = self.LABELS["background"]
-            label = cv2.resize(label.astype(np.uint8), None, fx=1 / self.downsampling_factor, fy=1 / self.downsampling_factor, interpolation=cv2.INTER_AREA)
+            label = cv2.resize(label.astype(np.int16), None, fx=1 / self.downsampling_factor, fy=1 / self.downsampling_factor, interpolation=cv2.INTER_AREA)
             label = label.astype(np.int32)  # cv2.resize does not work with int32 for some reason
 
             basename = osp.splitext(data_path)[0]
