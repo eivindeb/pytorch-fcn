@@ -20,6 +20,7 @@ class LogAnalyzer:
 
             is_validation = False
             epoch_iteration_start = 0
+            elapsed_time_base = 0
 
             for i, row in enumerate(reader):
                 if int(row["epoch"]) > len(self.data["train"]) - 1:
@@ -53,6 +54,15 @@ class LogAnalyzer:
                                     continue
 
                             row_cat = "valid" if is_validation else "train"
+
+                            if key == "elapsed_time":
+                                try:
+                                    if self.data[row_cat][-1]["data"][key][-1] - elapsed_time_base > val:
+                                        elapsed_time_base = self.data[row_cat][-1]["data"][key][-1]
+                                    val += elapsed_time_base
+                                except:
+                                    pass
+
                             if key not in self.data[row_cat][-1]["data"]:
                                 self.data[row_cat][-1]["data"].update({key: []})
 
@@ -91,7 +101,7 @@ class LogAnalyzer:
         return [self.data[split][split_idx]["data"]["filename"][i] for i in res]
 
 
-    def graph_factor(self, factor, x_axis_scale="iteration", include_validation=False, per_class=False, iteration_window=0, reject_outliers=True):
+    def graph_factor(self, factor, x_axis_scale="iteration", include_validation=False, per_class=False, iteration_window=0, reject_outliers=True, include_time=False, save_plot=False, data_range=(0, -1)):
         train_factors = {f for d in self.data["train"] for f in d["data"] if "train/{}".format(factor) in f}
         #train_factors = {"train/{}".format(factor): []}
         include_training = any(any(t_f in d["data"] for t_f in train_factors) for d in self.data["train"])
@@ -145,9 +155,15 @@ class LogAnalyzer:
         elif x_axis_scale == "iteration":
             if include_training:
                 data = {t_f: [] for t_f in train_factors}
+                data.update({"elapsed_time": []})
                 for d in self.data["train"]:
+                    if include_time:
+                        data["elapsed_time"].extend(d["data"]["elapsed_time"])
                     for t_f in train_factors:
                         data[t_f].extend(d["data"][t_f])
+
+                for k, v in data.items():
+                    data[k] = v[data_range[0]:data_range[1]]
 
                 for t_f in train_factors:
                     data[t_f] = np.asarray(data[t_f])  # TODO: x values are slightly off due to removed nans
@@ -170,27 +186,44 @@ class LogAnalyzer:
                 if per_class:
                     for f in valid_factors:
                         for d in self.data["valid"]:
-                            if f in d["mean"]:
+                            if f in d["mean"] and data_range[0] <= d["iteration"] <= data_range[1]:
                                 valid_y_values[f].append(d["mean"][f])
                                 valid_x_values[f].append(d["iteration"])
                 else:
                     for d in self.data["valid"]:
-                        if valid_factor in d["mean"]:
+                        if valid_factor in d["mean"] and data_range[0] <= d["iteration"] <= data_range[1]:
                             valid_y_values.append(d["mean"][valid_factor])
                             valid_x_values.append(d["iteration"])
 
+        fig = plt.figure()
+        ax1 = fig.add_subplot(111)
         if include_training:
             for t_f in sorted(train_factors):
-                plt.plot(x_values[t_f], y_values[t_f], label=t_f)
+                ax1.plot(x_values[t_f], y_values[t_f], label=t_f)
         if include_validation:
             if per_class:
                 for f in sorted(valid_factors):
-                    plt.plot(valid_x_values[f], valid_y_values[f], label=f, marker="o")
+                    ax1.plot(valid_x_values[f], valid_y_values[f], label=f, marker="o")
             else:
-                plt.plot(valid_x_values, valid_y_values, label="Validation", marker="o")
-        plt.title(factor)
+                ax1.plot(valid_x_values, valid_y_values, label="Validation", marker="o")
+
         plt.legend()
         plt.xlabel(x_axis_scale)
+
+        if include_time:
+            ax2 = ax1.twiny()
+            ax2.set_xlim(ax1.get_xlim())
+            ax1_ticks = ax1.get_xticks()
+            ax1_ticks = [t for t in ax1_ticks if t >= 0 and t < len(data["elapsed_time"])]
+            ax2.set_xticks(ax1_ticks)
+            ax2.set_xticklabels(["{0:.1f}".format(data["elapsed_time"][int(t)] / 3600) for t in ax1_ticks])
+            ax2.set_xlabel("Elapsed time (h)")
+
+        if save_plot:
+            plt.savefig("figures/{}.pdf".format(factor), format="pdf")
+
+        plt.title(factor, y=1.12)
+
         plt.show()
 
 
