@@ -137,6 +137,10 @@ class RadarDatasetFolder(data.Dataset):
             else:
                 raise TypeError("Unrecognized keyword argument: {}".format(var))
 
+        if self.class_names.size != self.class_weights.size:
+            print("Number of defined classes and class weights does not match.")
+            exit(0)
+
         self.metadata = True if self.include_weather_data else False
 
         if self.metadata:
