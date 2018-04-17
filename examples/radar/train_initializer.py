@@ -87,9 +87,9 @@ def git_hash():
     return hash
 
 
-def get_log_dir(model_name, cfg):
+def get_log_dir(model_name, setup_name, cfg):
     # load config
-    name = 'MODEL-%s' % (model_name)
+    name = '{}_MODEL-{}'.format(setup_name, model_name)
     now = datetime.datetime.now(pytz.timezone('Europe/Oslo'))
     name += '_TIME-%s' % now.strftime('%Y%m%d-%H%M%S')
     # create out
@@ -137,8 +137,9 @@ here = osp.dirname(osp.abspath(__file__))
 
 
 def main():
-    model_name = "RefineNet"
-    dataset_name = "test"
+    model_name = "PSPnet"
+    dataset_name = "2018"
+    setup_name = "Pretrained1chFreezeNotFirstLast"
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', type=int, default=1,
