@@ -266,6 +266,7 @@ class RadarDatasetFolder(data.Dataset):
             img = np.expand_dims(img, axis=0)
         else:
             img = np.stack((img,) * 3, -1)
+            img = np.transpose(img, (2, 0, 1))
         img = torch.from_numpy(img).float()
         lbl = torch.from_numpy(lbl).long()
         if metadata is not None:
@@ -288,7 +289,10 @@ class RadarDatasetFolder(data.Dataset):
 
     def untransform(self, img, lbl, metadata=None):
         img = img.numpy()
-        img = np.squeeze(img, axis=0)
+        if self.image_mode == "Grayscale":
+            img = np.squeeze(img, axis=0)
+        else:
+            img = img[0, :, :]
         img += self.mean_bgr
         img = img.astype(np.uint8)
         lbl = lbl.numpy()
