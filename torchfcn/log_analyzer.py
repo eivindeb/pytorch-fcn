@@ -210,14 +210,24 @@ class LogAnalyzer:
                     for f in valid_factors:
                         for d in self.data["valid"]:
                             if f in d["mean"]:
-                                cur_x = d["iteration"] if x_axis_scale == "iteration" else data["elapsed_time"][d["iteration"]]
+                                if x_axis_scale == "iteration":
+                                    cur_x = d["iteration"]
+                                elif d["iteration"] < len(data["elapsed_time"]):
+                                    cur_x = data["elapsed_time"][d["iteration"]]
+                                else:
+                                    break
                                 if data_range[0] <= cur_x <= data_range[1] or data_range[1] == -1 and data_range[0] <= cur_x:
                                     valid_y_values[f].append(d["mean"][f])
                                     valid_x_values[f].append(cur_x)
                 else:
                     for d in self.data["valid"]:
                         if valid_factor in d["mean"]:
-                            cur_x = d["iteration"] if x_axis_scale == "iteration" else data["elapsed_time"][d["iteration"]]
+                            if x_axis_scale == "iteration":
+                                cur_x = d["iteration"]
+                            elif d["iteration"] < len(data["elapsed_time"]):
+                                cur_x = data["elapsed_time"][d["iteration"]]
+                            else:
+                                break
                             if data_range[0] <= cur_x <= data_range[1] or data_range[1] == -1 and data_range[0] <= cur_x:
                                 valid_y_values.append(d["mean"][valid_factor])
                                 valid_x_values.append(cur_x)
