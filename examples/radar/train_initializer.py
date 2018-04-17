@@ -161,14 +161,22 @@ def main():
     if resume:
         checkpoint = torch.load(resume)
         out = checkpoint['out']
-        dataset_name = checkpoint.get("dataset_name", "test")
+        dataset_name = checkpoint.get("dataset_name", "2018")
+        #dataset_name = "2018"
+        model_name = out.split("/")[-1].split("_")[1].split("-")[-1]
+        #model_name = "PSPnet"
         with open(osp.join(out, "config.yaml"), 'r') as f:
             cfg = yaml.load(f)
-        dataset_cfg = osp.join(out, "polarlys_cfg.txt")
+        train_cfg = osp.join(out, "polarlys_cfg_train.txt")
+        valid_cfg = osp.join(out, "polarlys_cfg_valid.txt")
     else:
-        dataset_cfg = osp.join(root, "polarlys_cfg.txt")
+        train_cfg = osp.join(root, "polarlys_cfg.txt")
+        valid_cfg = train_cfg
         cfg = configurations[model_cfg]#configurations[args.config]
-        out = get_log_dir(model_name, cfg)
+        out = get_log_dir(model_name, setup_name, cfg)
+
+    if "freeze" not in cfg:  # legacy compatability
+        cfg.update({"freeze": None})
 
     cuda = torch.cuda.is_available()
 
@@ -178,44 +186,49 @@ def main():
 
     # 1. dataset
 
-    #root = "/media/stx/LaCie1/export"
-
-    #root = osp.expanduser('~/data/datasets/Radar')
-
     data_folder = "/nas0/"
-    #data_folder = root
 
-    if model_name == "PSPnet":
-        radar_kwargs = {"train": {"height_divisions": 7, "width_divisions": 0}, "valid": {"height_divisions": 1, "width_divisions": 0}}
-    elif fcn:
-        radar_kwargs = {"train": {"height_divisions": 2, "width_divisions": 0}, "valid": {"height_divisions": 1, "width_divisions": 0}}
-    elif model_name == "GCN":
-        radar_kwargs = {"train": {"height_divisions": 5, "width_divisions": 0, "overlap": 0}}
-        radar_kwargs.update({"valid": radar_kwargs["train"]})
-    elif model_name == "RefineNet":
-        radar_kwargs = {"train": {"height_divisions": 5, "width_divisions": 0, "overlap": 0, "image_height": 4032, "image_width": 1984}}
-        radar_kwargs.update({"valid": radar_kwargs["train"]})
-    elif model_name == "LinkNet":
-        radar_kwargs = {"train": {"height_divisions": 5, "width_divisions": 0, "overlap": 0}}
-        radar_kwargs.update({"valid": radar_kwargs["train"]})
+    if not resume:
+        if model_name == "PSPnet":
+            radar_kwargs = {"train": {"height_divisions": 7, "width_divisions": 0, "overlap": 0}, "valid": {"height_divisions": 1, "width_divisions": 0, "downsampling_factor": 1}}
+        elif fcn:
+            radar_kwargs = {"train": {"height_divisions": 2, "width_divisions": 0}, "valid": {"height_divisions": 1, "width_divisions": 0}}
+        elif model_name == "GCN":
+            radar_kwargs = {"train": {"height_divisions": 5, "width_divisions": 0, "overlap": 0}}
+            radar_kwargs.update({"valid": radar_kwargs["train"]})
+        elif model_name == "RefineNet":
+            radar_kwargs = {"train": {"height_divisions": 5, "width_divisions": 0, "overlap": 0, "image_height": 4032, "image_width": 1984}}
+            radar_kwargs.update({"valid": radar_kwargs["train"]})
+        elif model_name == "LinkNet":
+            radar_kwargs = {"train": {"height_divisions": 5, "width_divisions": 0, "overlap": 0}}
+            radar_kwargs.update({"valid": radar_kwargs["train"]})
+    else:
+        radar_kwargs = {"train": {}, "valid": {}}
     kwargs = {'num_workers': 8, 'pin_memory': True} if cuda else {}
 
     train_loader = torch.utils.data.DataLoader(
         torchfcn.datasets.RadarDatasetFolder(
-            root, split='train', cfg=dataset_cfg, transform=True, dataset_name=dataset_name, min_data_interval=10, **radar_kwargs["train"]),
+            root, split='train', cfg=train_cfg, transform=True, dataset_name=dataset_name, min_data_interval=10, **radar_kwargs["train"]),
         batch_size=1, shuffle=False, **kwargs)
 
     val_loader = torch.utils.data.DataLoader(
         torchfcn.datasets.RadarDatasetFolder(
-            root, split='valid', cfg=dataset_cfg, transform=True, dataset_name=dataset_name, min_data_interval=60*5, **radar_kwargs["valid"]),
+            root, split='valid', cfg=valid_cfg, transform=True, dataset_name=dataset_name, min_data_interval=60*5, **radar_kwargs["valid"]),
         batch_size=1, shuffle=False, **kwargs)
 
     # 2. model
+    
+    if not resume:
+        train_loader.dataset.dump_config(osp.join(out, "polarlys_cfg_train.txt"))
+        val_loader.dataset.dump_config(osp.join(out, "polarlys_cfg_valid.txt"))
 
     n_class = train_loader.dataset.class_names.size
 
     if model_name == "PSPnet":
-        model = psp_net.PSPNet(num_classes=n_class, pretrained=cfg["pretrained"], metadata_channels=14 if train_loader.dataset.metadata else 0)
+        model = psp_net.PSPNet(num_classes=n_class, pretrained=cfg["pretrained"],
+                               metadata_channels=14 if train_loader.dataset.metadata else 0,
+                               in_channels=1 if train_loader.dataset.image_mode == "Grayscale" else 3,
+                               use_cfar_filters=False, use_aux=True, freeze=["layer1", "layer2", "layer3"])
     elif model_name == "fcn32s":
         model = torchfcn.models.FCN32s(n_class=n_class, metadata=train_loader.dataset.metadata)
     elif model_name == "fcn8s":
@@ -279,8 +292,7 @@ def main():
         interval_checkpoint=cfg.get("interval_checkpoint", None),
         interval_weight_update=cfg.get("interval_weight_update", None),
     )
-    if not resume:
-        shutil.copy(dataset_cfg, osp.join(trainer.out, "polarlys_cfg.txt"))
+
     trainer.epoch = start_epoch
     trainer.iteration = start_iteration
     trainer.train()

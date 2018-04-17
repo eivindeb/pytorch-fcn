@@ -77,16 +77,17 @@ class RadarDatasetFolder(data.Dataset):
         if not osp.exists(self.dataset_folder):
             makedirs(self.dataset_folder)
 
-        config = ConfigParser()
+        self.config = ConfigParser()
+        self.config.optionxform = str
         try:
             with open(cfg, 'r') as cfg:
-                config.read_file(cfg)
+                self.config.read_file(cfg)
         except IOError:
             print("Configuration file not found at {}".format(cfg))
             exit(0)
-        self.cache_labels = config["Parameters"].getboolean("CacheLabels", False)
-        self.data_folder = config["Paths"].get("DataFolder")
-        self.cache_folders = config["Paths"].get("CacheFolder(s)").split(",")
+        self.cache_labels = self.config["Parameters"].getboolean("CacheLabels", False)
+        self.data_folder = self.config["Paths"].get("DataFolder")
+        self.cache_folders = self.config["Paths"].get("CacheFolder(s)").split(",")
 
         if self.cache_labels and self.cache_folders is None:
             print("Cache labels is set to true, but no label folder is provided.")
@@ -96,7 +97,7 @@ class RadarDatasetFolder(data.Dataset):
             if not osp.exists(cache_folder):
                 makedirs(cache_folder)
 
-        dataloader_config = config["Paths"].get("DataloaderCFG")
+        dataloader_config = self.config["Paths"].get("DataloaderCFG")
 
         if dataloader_config is None:
             print("Configuration file missing required field: DataloaderCFG")
@@ -106,34 +107,37 @@ class RadarDatasetFolder(data.Dataset):
             print("Configuration file missing required field: DataFolder")
             exit(0)
 
-        self.radar_types = [radar for radar in config["Parameters"].get("RadarTypes", "Radar0,Radar1,Radar2").split(",")]
-        self.unlabel_chart_data = config["Parameters"].getboolean("UnlabelChartData", False)
-        self.remove_hidden_targets = config["Parameters"].getboolean("RemoveHiddenTargets", True)
-        self.class_names = np.array([c for c in config["Parameters"].get("Classes", "background,ship").split(",")])
-        self.class_weights = np.array([int(weight) for weight in config["Parameters"].get("ClassWeights", "1,5000").split(",")])
-        self.remove_files_without_targets = config["Parameters"].getboolean("RemoveFilesWithoutTargets", True)
-        self.min_data_interval = config["Parameters"].getint("MinDataIntervalSeconds", 0)
-        self.skip_processed_files = config["Parameters"].getboolean("SkipProcessedFiles", True)
-        self.coordinate_system = config["Parameters"].get("CoordinateSystem", "Polar")
-        self.max_disk_usage = config["Parameters"].get("MaximumDiskUsage", None)
-        self.set_splits = [float(s) for s in config["Parameters"].get("SetSplits", "0.95,0.025,0.025").split(",")]
-        self.image_width = config["Parameters"].getint("ImageWidth", 2000)
-        self.image_height = config["Parameters"].getint("ImageHeight", 4096)
-        self.land_threshold = config["Parameters"].getint("LandThreshold", 70)
-        self.include_weather_data = config["Parameters"].getboolean("IncludeWeatherData", False)
-        self.chart_area_threshold = config["Parameters"].getint("ChartAreaThreshold", 10000)
-        self.min_vessel_land_dist = config["Parameters"].getfloat("MinVesselLandDistance", 10)
-        self.min_own_velocity = config["Parameters"].getfloat("MinOwnVelocity", 1)
-        self.downsampling_factor = config["Parameters"].getint("DownsamplingFactor", 1)
-        self.image_mode = config["Parameters"].get("ImageMode", "Grayscale")
+        self.radar_types = [radar for radar in self.config["Parameters"].get("RadarTypes", "Radar0,Radar1,Radar2").split(",")]
+        self.unlabel_chart_data = self.config["Parameters"].getboolean("UnlabelChartData", False)
+        self.remove_hidden_targets = self.config["Parameters"].getboolean("RemoveHiddenTargets", True)
+        self.class_names = np.array([c for c in self.config["Parameters"].get("Classes", "background,ship").split(",")])
+        self.class_weights = np.array([int(weight) for weight in self.config["Parameters"].get("ClassWeights", "1,5000").split(",")])
+        self.remove_files_without_targets = self.config["Parameters"].getboolean("RemoveFilesWithoutTargets", True)
+        self.min_data_interval = self.config["Parameters"].getint("MinDataIntervalSeconds", 0)
+        self.skip_processed_files = self.config["Parameters"].getboolean("SkipProcessedFiles", True)
+        self.coordinate_system = self.config["Parameters"].get("CoordinateSystem", "Polar")
+        self.max_disk_usage = self.config["Parameters"].get("MaximumDiskUsage", None)
+        self.set_splits = [float(s) for s in self.config["Parameters"].get("SetSplits", "0.95,0.025,0.025").split(",")]
+        self.image_width = self.config["Parameters"].getint("ImageWidth", 2000)
+        self.image_height = self.config["Parameters"].getint("ImageHeight", 4096)
+        self.land_threshold = self.config["Parameters"].getint("LandThreshold", 70)
+        self.include_weather_data = self.config["Parameters"].getboolean("IncludeWeatherData", False)
+        self.chart_area_threshold = self.config["Parameters"].getint("ChartAreaThreshold", 10000)
+        self.min_vessel_land_dist = self.config["Parameters"].getfloat("MinVesselLandDistance", 10)
+        self.min_own_velocity = self.config["Parameters"].getfloat("MinOwnVelocity", 1)
+        self.downsampling_factor = self.config["Parameters"].getint("DownsamplingFactor", 1)
+        self.image_mode = self.config["Parameters"].get("ImageMode", "Grayscale")
 
-        self.height_divisions = config["Parameters"].getint("HeightDivisions", 2)
-        self.width_divisions = config["Parameters"].getint("WidthDivisions", 0)
-        self.overlap = config["Parameters"].getint("Overlap", 20)
+        self.height_divisions = self.config["Parameters"].getint("HeightDivisions", 2)
+        self.width_divisions = self.config["Parameters"].getint("WidthDivisions", 0)
+        self.overlap = self.config["Parameters"].getint("Overlap", 20)
 
         for var, val in kwargs.items():
             if hasattr(self, var):
                 setattr(self, var, val)
+                config_var = [var_split.capitalize() for var_split in var.split("_")]
+                config_var = "".join(config_var)
+                self.config["Parameters"][config_var] = str(val)
             else:
                 raise TypeError("Unrecognized keyword argument: {}".format(var))
 
@@ -374,6 +378,11 @@ class RadarDatasetFolder(data.Dataset):
                 return label_path
 
         return None
+
+    def dump_config(self, path):
+        with open(path, 'w') as cfgout:
+            self.config.write(cfgout)
+
 
     def calculate_dataset_stats(self, mode="data"):
         config = ConfigParser()
