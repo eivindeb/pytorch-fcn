@@ -876,8 +876,8 @@ class RadarDatasetFolder(data.Dataset):
                 self.logger.warning("Scaled AIS data could not be gathered for {}".format(self.data_path_to_rel_label_path(data_path)))
                 raise LabelSourceMissing
 
-            scaled_range = [scaled_ais_layer.shape[0] - round((scaled_ais_layer.shape[0] * 3 - self.image_height) / 3),
-                            scaled_ais_layer.shape[1] - round((scaled_ais_layer.shape[1] * 3 - self.image_width) / 3)]
+            scaled_range = [scaled_ais_layer.shape[0] - round((scaled_ais_layer.shape[0] * self.downsampling_factor - self.image_height) / self.downsampling_factor),
+                            scaled_ais_layer.shape[1] - round((scaled_ais_layer.shape[1] * self.downsampling_factor - self.image_width) / self.downsampling_factor)]
             scaled_ais_layer = scaled_ais_layer[:scaled_range[0], :scaled_range[1]]
 
             label[scaled_ais_layer == 1] = self.LABEL_SOURCE["ais"]
