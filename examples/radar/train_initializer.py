@@ -266,8 +266,8 @@ def main():
             weight_decay=cfg['weight_decay'])
     else:
         optim = torch.optim.SGD([
-            {"params": [param for name, param in model.named_parameters() if name[-4:] == "bias"], "lr": 2 * cfg["lr"]},
-            {"params": [param for name, param in model.named_parameters() if name[-4:] != "bias"], "lr": cfg["lr"],
+            {"params": [param for name, param in model.named_parameters() if name[-4:] == "bias" and param.requires_grad], "lr": 2 * cfg["lr"]},
+            {"params": [param for name, param in model.named_parameters() if name[-4:] != "bias" and param.requires_grad], "lr": cfg["lr"],
                 "weight_decay": cfg["weight_decay"]}
             ],  momentum=cfg['momentum'],
                 nesterov=True
