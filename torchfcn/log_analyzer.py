@@ -30,7 +30,7 @@ class LogAnalyzer:
                     is_validation = False
                     self.data["valid"][-1]["mean"] = {key: val.pop() for key, val in
                                                       self.data["valid"][-1]["data"].items() if key != "filename"}
-                    self.data["valid"][-1]["end_time"] = float(row["elapsed_time"])
+                    self.data["valid"][-1]["end_time"] = float(row["elapsed_time"]) + elapsed_time_base
                 elif row["valid/loss"] != "" and not is_validation:
                     is_validation = True
                     self.data["valid"].append(
@@ -59,9 +59,9 @@ class LogAnalyzer:
                                 try:
                                     if self.data[row_cat][-1]["data"][key][-1] - elapsed_time_base > val:
                                         elapsed_time_base = self.data[row_cat][-1]["data"][key][-1]
-                                    val += elapsed_time_base
                                 except:
                                     pass
+                                val += elapsed_time_base
 
                             if key not in self.data[row_cat][-1]["data"]:
                                 self.data[row_cat][-1]["data"].update({key: []})
@@ -73,7 +73,7 @@ class LogAnalyzer:
 
             if is_validation:
                 self.data["valid"][-1]["mean"] = {key: val.pop() for key, val in self.data["valid"][-1]["data"].items() if key != "filename"}
-                self.data["valid"][-1]["end_time"] = float(row["elapsed_time"])
+                self.data["valid"][-1]["end_time"] = float(row["elapsed_time"]) + elapsed_time_base
 
     def validation_metric_histogram(self, metric, validation_idx=-1):
         try:
