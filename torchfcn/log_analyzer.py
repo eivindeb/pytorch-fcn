@@ -75,7 +75,7 @@ class LogAnalyzer:
                 self.data["valid"][-1]["mean"] = {key: val.pop() for key, val in self.data["valid"][-1]["data"].items() if key != "filename"}
                 self.data["valid"][-1]["end_time"] = float(row["elapsed_time"]) + elapsed_time_base
 
-    def validation_metric_histogram(self, metric, validation_idx=-1):
+    def validation_metric_histogram(self, metric, validation_idx=-1, fig=None, return_fig=False, **kwargs):
         try:
             data = self.data["valid"][validation_idx]["data"]["valid/{}".format(metric)]
         except Exception as e:
@@ -83,8 +83,11 @@ class LogAnalyzer:
             raise e
         iteration = self.data["valid"][validation_idx]["iteration"]
         data = np.asarray(data)
-        plt.hist(data[~np.isnan(data)], bins=100)
+
+        plt.hist(data[~np.isnan(data)], bins=100, **kwargs)
         plt.xlim(0, 1)
+        if return_fig:
+            return
         plt.title("Histogram for {} in validation on iteration {}".format(metric, iteration))
         plt.show()
 
@@ -99,6 +102,18 @@ class LogAnalyzer:
             res = np.argsort(data)[::-1][:N]
 
         return [self.data[split][split_idx]["data"]["filename"][i] for i in res]
+
+    def get_best_valid_idx(self, factor="mean_bj", max_time=-1, max_iteration=-1):
+        factor = "valid/{}".format(factor)
+        best_idx, best_val = 0, 0
+        for i in range(1, len(self.data["valid"])):
+            if (max_time == -1 or self.data["valid"][i]["start_time"] <= max_time) \
+                and (max_iteration == - 1 or self.data["valid"][i]["iteration"] <= max_iteration):
+                if self.data["valid"][i]["mean"][factor] > best_val:
+                    best_idx = i
+                    best_val = self.data["valid"][i]["mean"][factor]
+
+        return best_idx
 
 
     def graph_factor(self, factor, x_axis_scale="iteration", include_validation=False, per_class=False, iteration_window=0, reject_outliers=True, include_time=False, save_plot=False, data_range=(0, -1), fig=None, return_fig=False):
