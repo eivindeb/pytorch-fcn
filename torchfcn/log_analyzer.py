@@ -116,7 +116,7 @@ class LogAnalyzer:
         return best_idx
 
 
-    def graph_factor(self, factor, x_axis_scale="iteration", include_validation=False, per_class=False, iteration_window=0, reject_outliers=True, include_time=False, save_plot=False, data_range=(0, -1), fig=None, return_fig=False):
+    def graph_factor(self, factor, x_axis_scale="iteration", include_validation=False, per_class=False, iteration_window=0, reject_outliers=True, include_time=False, save_plot=False, data_range=(0, -1), fig=None, return_fig=False, labels=None):
         train_factors = {f for d in self.data["train"] for f in d["data"] if "train/{}".format(factor) in f}
         #train_factors = {"train/{}".format(factor): []}
         include_training = any(any(t_f in d["data"] for t_f in train_factors) for d in self.data["train"])
@@ -258,13 +258,18 @@ class LogAnalyzer:
                 ax1 = all_axes[0]
         if include_training:
             for t_f in sorted(train_factors):
-                ax1.plot(x_values[t_f], y_values[t_f], label=t_f)
+                ax1.plot(x_values[t_f], y_values[t_f], label=t_f if labels is None else labels[t_f])
         if include_validation:
             if per_class:
                 for f in sorted(valid_factors):
-                    ax1.plot(valid_x_values[f], valid_y_values[f], label=f, marker="o")
+                    ax1.plot(valid_x_values[f], valid_y_values[f], label=f if labels is None else labels[f], marker="o")
             else:
-                ax1.plot(valid_x_values, valid_y_values, label="Validation", marker="o")
+                label = "Validation" if labels is None else labels["valid/{}".format(factor)]
+                if label is None:
+                    line_c = fig.axes[0].lines[-1].get_color()
+                    ax1.plot(valid_x_values, valid_y_values, label=None, c=line_c, ls=":", marker="o")
+                else:
+                    ax1.plot(valid_x_values, valid_y_values, label=label, marker="o")
 
         plt.legend()
         plt.xlabel(x_axis_scale)
