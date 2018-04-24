@@ -201,6 +201,7 @@ class LogAnalyzer:
 
                 for t_f in train_factors:
                     data[t_f] = np.asarray(data[t_f])  # TODO: x values are slightly off due to removed nans
+                    idxs = np.argwhere(~np.isnan(data[t_f]))
                     data[t_f] = data[t_f][~np.isnan(data[t_f])]
                     if iteration_window != 0:
                         y_values[t_f] = np.convolve(data[t_f], np.ones((iteration_window,))/iteration_window, mode="valid")
@@ -208,9 +209,9 @@ class LogAnalyzer:
                         y_values[t_f] = data[t_f]
 
                     if x_axis_scale == "iteration":
-                        x_values[t_f] = range(data_range[0], len(y_values[t_f]))
+                        x_values[t_f] = idxs[:-(iteration_window - 1)] + data_range[0]
                     elif x_axis_scale == "time":
-                        x_values[t_f] = data["elapsed_time"][idx_range[0]:len(y_values[t_f])]
+                        x_values[t_f] = np.asarray(data["elapsed_time"])[idxs[:-(iteration_window - 1)] + idx_range[0]]
 
                 if reject_outliers:
                     for t_f in train_factors:
@@ -227,10 +228,8 @@ class LogAnalyzer:
                             if f in d["mean"]:
                                 if x_axis_scale == "iteration":
                                     cur_x = d["iteration"]
-                                elif d["iteration"] < len(data["elapsed_time"]):
-                                    cur_x = data["elapsed_time"][d["iteration"]]
-                                else:
-                                    break
+                                elif x_axis_scale == "time":
+                                    cur_x = d["start_time"]
                                 if data_range[0] <= cur_x <= data_range[1] or data_range[1] == -1 and data_range[0] <= cur_x:
                                     valid_y_values[f].append(d["mean"][f])
                                     valid_x_values[f].append(cur_x)
@@ -239,10 +238,8 @@ class LogAnalyzer:
                         if valid_factor in d["mean"]:
                             if x_axis_scale == "iteration":
                                 cur_x = d["iteration"]
-                            elif d["iteration"] < len(data["elapsed_time"]):
-                                cur_x = data["elapsed_time"][d["iteration"]]
-                            else:
-                                break
+                            elif x_axis_scale == "time":
+                                cur_x = d["start_time"]
                             if data_range[0] <= cur_x <= data_range[1] or data_range[1] == -1 and data_range[0] <= cur_x:
                                 valid_y_values.append(d["mean"][valid_factor])
                                 valid_x_values.append(cur_x)
