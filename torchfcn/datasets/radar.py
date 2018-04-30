@@ -118,8 +118,8 @@ class RadarDatasetFolder(data.Dataset):
         self.coordinate_system = self.config["Parameters"].get("CoordinateSystem", "Polar")
         self.max_disk_usage = self.config["Parameters"].get("MaximumDiskUsage", None)
         self.set_splits = [float(s) for s in self.config["Parameters"].get("SetSplits", "0.95,0.025,0.025").split(",")]
-        self.image_width = self.config["Parameters"].getint("ImageWidth", 2000)
-        self.image_height = self.config["Parameters"].getint("ImageHeight", 4096)
+        self.width_region = [int(s) for s in self.config["Parameters"].get("WidthRegion", "0,2000").split(",")]
+        self.height_region = [int(s) for s in self.config["Parameters"].get("HeightRegion", "0,4096").split(",")]
         self.land_threshold = self.config["Parameters"].getint("LandThreshold", 70)
         self.include_weather_data = self.config["Parameters"].getboolean("IncludeWeatherData", False)
         self.chart_area_threshold = self.config["Parameters"].getint("ChartAreaThreshold", 10000)
@@ -574,7 +574,7 @@ class RadarDatasetFolder(data.Dataset):
                             if file in files_without_targets:
                                 continue
                             ais_targets = self.ais_targets_to_list(ais_targets)
-                            ais_targets_in_range = [t for t in ais_targets if t[1] <= self.image_width]
+                            ais_targets_in_range = [t for t in ais_targets if self.width_region[0] <= t[1] <= self.width_region[1]]
 
                             if len(ais_targets_in_range) > 0:
                                 if self.remove_hidden_targets:
@@ -593,7 +593,7 @@ class RadarDatasetFolder(data.Dataset):
                                         processed_files_index.write(
                                             "{};{}\n".format(file, self.ais_targets_to_string(ais_targets)))
                                         continue
-                                    if np.any(lbl[:, :self.image_width] == self.LABELS["vessel"]):
+                                    if np.any(lbl[self.height_region[0]:self.height_region[1], self.width_region[0]:self.width_region[1]] == self.LABELS["vessel"]):
                                         processed_files_index.write(
                                             "{};{}\n".format(file, self.ais_targets_to_string(ais_targets)))
                                     else:
@@ -771,7 +771,7 @@ class RadarDatasetFolder(data.Dataset):
         for i, file in tqdm.tqdm(enumerate(self.files[self.split]), total=len(self.files[self.split]),
                                  desc="Calculating class shares for {} data".format(self.split), leave=False):
 
-            lbl = self.get_label(file["path"])[:self.image_height, :self.image_width]
+            lbl = self.get_label(file["path"])[self.height_region[0]:self.height_region[1], self.width_region[0]:self.width_region[1]]
             data_range = self.data_ranges[file["range"]]
 
             for c_index, c in enumerate(self.class_names):
@@ -843,16 +843,16 @@ class RadarDatasetFolder(data.Dataset):
                 self.logger.warning("AIS data could not be gathered for {}".format(self.data_path_to_rel_label_path(data_path)))
                 raise LabelSourceMissing
             else:
-                label = ais.astype(np.int32)[:self.image_height, :self.image_width] * self.LABEL_SOURCE["ais"]
+                label = ais.astype(np.int32)[self.height_region[0]:self.height_region[1], self.width_region[0]:self.width_region[1]] * self.LABEL_SOURCE["ais"]
 
             if not {"land", "islet", "unknown"}.isdisjoint(self.class_names) or self.unlabel_chart_data:
-                chart = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, binary=True, only_first_range_step=True if self.image_width <= 2000 else False)
+                chart = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, binary=True, only_first_range_step=True if self.image_region[1] <= 2000 else False)
 
                 if chart is None:
                     self.logger.warning("Chart data could not be gathered for {}".format(self.data_path_to_rel_label_path(data_path)))
                     raise LabelSourceMissing
                 else:
-                    chart = chart[:self.image_height, :self.image_width]
+                    chart = chart[self.height_region[0]:self.height_region[1], self.width_region[0]:self.width_region[1]]
 
                 label[chart == 1] = self.LABEL_SOURCE["chart"]
 
@@ -969,7 +969,7 @@ class RadarDatasetFolder(data.Dataset):
                     label = self.get_label(data_path)
                 continue
 
-            label = label[:self.image_height, :self.image_width]
+            label = label[self.height_region[0]:self.height_region[1], self.width_region[0]:self.width_region[1]]
 
             for component in components:
                 if component in self.LABELS:
@@ -991,16 +991,16 @@ class RadarDatasetFolder(data.Dataset):
                     processed_labels.add(label_path)
                     continue
                 else:
-                    ais = ais[:self.image_height, :self.image_width]
+                    ais = ais[self.height_region[0]:self.height_region[1], self.width_region[0]:self.width_region[1]]
                 label[ais == 1] = self.LABEL_SOURCE["ais"]
             if "chart" in components:
-                land = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, binary=True, only_first_range_step=True if self.image_width <= 2000 else False)
+                land = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, binary=True, only_first_range_step=True if self.image_region[1] <= 2000 else False)
                 if isinstance(land, list):
                     self.logger.warning("Label {} not updated.\nChart data could not be gathered".format(label_path))
                     processed_labels.add(label_path)
                     continue
                 else:
-                    land = land[:self.image_height, :self.image_width]
+                    land = land[self.height_region[0]:self.height_region[1], self.width_region[0]:self.width_region[1]]
 
                 label[land == 1] = self.LABEL_SOURCE["chart"]
 
@@ -1109,8 +1109,8 @@ class RadarDatasetFolder(data.Dataset):
             raise ValueError
 
         self.data_ranges = []
-        h_step_size = int(round(self.image_height / self.downsampling_factor) / (height_division_count + 1))
-        w_step_size = int(round(self.image_width / self.downsampling_factor) / (width_division_count + 1))
+        h_step_size = int(round((self.height_region[1] - self.height_region[0]) / self.downsampling_factor) / (height_division_count + 1))
+        w_step_size = int(round((self.width_region[1] - self.width_region[0]) / self.downsampling_factor) / (width_division_count + 1))
 
         for i in range(height_division_count + 1):
             for j in range(width_division_count + 1):
@@ -1159,7 +1159,7 @@ class RadarDatasetFolder(data.Dataset):
         else:
             data_path = self.get_data_path(data_path)
             label_path = self.get_label_path(data_path)
-            data_range = np.s_[:self.image_height, :self.image_width]
+            data_range = np.s_[self.height_region[0]:self.height_region[1], self.width_region[0]:self.width_region[1]]
 
         img = self.load_image(data_path)[data_range]
         if len(img.shape) == 2:
