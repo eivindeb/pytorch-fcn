@@ -127,6 +127,7 @@ class RadarDatasetFolder(data.Dataset):
         self.min_own_velocity = self.config["Parameters"].getfloat("MinOwnVelocity", 1)
         self.downsampling_factor = self.config["Parameters"].getfloat("DownsamplingFactor", 1)
         self.image_mode = self.config["Parameters"].get("ImageMode", "Grayscale")
+        self.range_normalize = self.config["Parameters"].getboolean("RangeNormalize", False)
 
         self.height_divisions = self.config["Parameters"].getint("HeightDivisions", 2)
         self.width_divisions = self.config["Parameters"].getint("WidthDivisions", 0)
@@ -247,20 +248,27 @@ class RadarDatasetFolder(data.Dataset):
 
         img = img[data_range]
         lbl = lbl[data_range]
-
-        if self._transform:
-            if self.include_weather_data:
-                return self.transform(img, lbl, metadata=self.get_weather_data(data_path))
+        try:
+            if self._transform:
+                if self.include_weather_data:
+                    return self.transform(img, lbl, metadata=self.get_weather_data(data_path))
+                else:
+                    return self.transform(img, lbl)
             else:
-                return self.transform(img, lbl)
-        else:
-            if self.include_weather_data:
-                return img, lbl, self.get_weather_data(data_path)
-            else:
-                return img, lbl
+                if self.include_weather_data:
+                    return img, lbl, self.get_weather_data(data_path)
+                else:
+                    return img, lbl
+        except:
+            indexes = list(range(len(self)))
+            indexes.remove(index)
+            return self.__getitem__(random.choice(indexes))
 
     def transform(self, img, lbl, metadata=None):
         img = img.astype(np.float64)
+        if self.range_normalize:
+            img = self.apply_range_normalization(img)
+
         img -= self.mean_bgr
         if self.image_mode == "Grayscale":
             img = np.expand_dims(img, axis=0)
@@ -312,6 +320,74 @@ class RadarDatasetFolder(data.Dataset):
         if type(img) == list:
             raise DataFileNotFound
         return img
+
+    def apply_range_normalization(self, data):
+        """
+        #means = [83.68624262883348,67.55744366227191,46.75703295544134]
+        means = np.load("/home/eivind/Documents/dev/ntnu-project/ml/pytorch-fcn/torchfcn/datasets/mean_sum.npy")
+        stds = np.load("/home/eivind/Documents/dev/ntnu-project/ml/pytorch-fcn/torchfcn/datasets/std_sum.npy")
+        #stds = [41.751658620945435,41.92119308299246,39.04992628116686]
+        #ranges = [[0, 250], [250, 750], [750, 2000]]
+        data -= means
+        data /= stds
+        """
+
+        bgr_image = np.load("/home/eivind/Documents/dev/ntnu-project/ml/pytorch-fcn/torchfcn/datasets/mean_bgr_filled.npy")
+        bgr_image = bgr_image[:data.shape[1]]
+        bgr_image = np.tile(bgr_image, (data.shape[0], 1))
+        dived = data / bgr_image
+        normalization_constant = np.mean(data) / (np.mean(data / bgr_image))
+        data = dived * normalization_constant
+        data = (255 / data.max()) * data
+
+        return data
+
+    def homomorphic_filtering(self, data_path=None, img=None):
+        if data_path is None and img is None:
+            raise ValueError
+
+        if img is None:
+            img = self.load_image(data_path)[:1000, 25:2000]
+
+        # Number of rows and columns
+        rows = img.shape[0]
+        cols = img.shape[1]
+
+        # Convert image to 0 to 1, then do log(1 + I)
+        imgLog = np.log1p(np.array(img, dtype="float") / 255)
+
+        # Create Gaussian mask of sigma = 10
+        M = 2 * rows + 1
+        N = 2 * cols + 1
+        sigma = 10
+        (X, Y) = np.meshgrid(np.linspace(0, N - 1, N), np.linspace(0, M - 1, M))
+        centerX = np.ceil(N / 2)
+        centerY = np.ceil(M / 2)
+        gaussianNumerator = (X - centerX) ** 2 + (Y - centerY) ** 2
+
+        # Low pass and high pass filters
+        Hlow = np.exp(-gaussianNumerator / (2 * sigma * sigma))
+        Hhigh = 1 - Hlow
+
+        # Move origin of filters so that it's at the top left corner to
+        # match with the input image
+        HlowShift = scipy.fftpack.ifftshift(Hlow.copy())
+        HhighShift = scipy.fftpack.ifftshift(Hhigh.copy())
+
+        # Filter the image and crop
+        If = scipy.fftpack.fft2(imgLog.copy(), (M, N))
+        Ioutlow = scipy.real(scipy.fftpack.ifft2(If.copy() * HlowShift, (M, N)))
+        Iouthigh = scipy.real(scipy.fftpack.ifft2(If.copy() * HhighShift, (M, N)))
+
+        # Set scaling factors and add
+        gamma1 = 0.3
+        gamma2 = 1.5
+        Iout = gamma1 * Ioutlow[0:rows, 0:cols] + gamma2 * Iouthigh[0:rows, 0:cols]
+
+        # Anti-log then rescale to [0,1]
+        Ihmf = np.expm1(Iout)
+        Ihmf = (Ihmf - np.min(Ihmf)) / (np.max(Ihmf) - np.min(Ihmf))
+        return np.array(255 * Ihmf, dtype="uint8")
 
     def get_metadata(self, data_path):
         basename = osp.splitext(data_path)[0]
@@ -413,7 +489,8 @@ class RadarDatasetFolder(data.Dataset):
         config.optionxform = str
         with open(osp.join(self.dataset_folder, "stats.txt"), 'r') as stats_cfg:
             config.read_file(stats_cfg)
-            self.mean_bgr = config["Training"].getfloat("MeanBackground")
+            bgr_section = "Training" if not self.range_normalize else "RangeNormalize"
+            self.mean_bgr = config[bgr_section].getfloat("MeanBackground")
             if self.mean_bgr is None:
                 self.calculate_dataset_stats(mode="data")
 
@@ -732,19 +809,11 @@ class RadarDatasetFolder(data.Dataset):
                 missing_files.append(entry)
                 continue
 
-            image_ranges_used = [entry["range"]]
-            for j in range(entry["range"] + 1, len(self.data_ranges)):
-                if j + i < len(sorted_files):
-                    if not entry["data"] == sorted_files[i + j]["data"]:
-                        break
-                    else:
-                        image_ranges_used.append(sorted_files[i + j]["range"])
+            img = img[self.height_region[0]:self.height_region[1], self.width_region[0]:self.width_region[1]]
+            if self.range_normalize:
+                img = self.apply_range_normalization(img)
 
-            if len(image_ranges_used) == len(self.data_ranges):
-                mean_sum += np.mean(img[:self.image_height, :self.image_width], dtype=np.float64)
-            else:
-                image_mean = sum([np.mean(img[self.data_ranges[k]], dtype=np.float64) for k in image_ranges_used])
-                mean_sum += image_mean/len(image_ranges_used)
+            mean_sum += np.mean(img, dtype=np.float64)
             processed_files.append(entry["data"])
 
         return mean_sum/len(processed_files)
@@ -1041,6 +1110,44 @@ class RadarDatasetFolder(data.Dataset):
 
                 last_filename = data_file
                 file.writelines(lines)
+
+    def get_distribution_statistics(self):
+        missing_files = set()
+        processed_files = set()
+        mean_sum = np.zeros((2000), dtype=np.float64)
+        std_sum = np.zeros((2000), dtype=np.float64)
+
+        for i, entry in tqdm.tqdm(enumerate(self.files["train"]), total=len(self.files["train"])):
+            if entry["data"] in processed_files:
+                continue
+
+            try:
+                img = self.load_image(entry["data"])
+                lbl = np.load(entry["label"])
+            except DataFileNotFound:
+                missing_files.add(entry)
+                continue
+
+            img = img[:, :2000].astype(np.float64)
+            lbl = lbl[:img.shape[0], :img.shape[1]]
+            img[lbl != 0] = np.nan
+            mean_sum += np.nanmean(img, axis=0, dtype=np.float64)
+            std_sum += np.nanmean(img, axis=0, dtype=np.float64)
+
+            processed_files.add(entry["data"])
+
+            if i % 1000 == 0:
+                print("{}: mean: {}\tstd: {}".format(i, ",".join([str(v /len(processed_files)) for v in mean_sum]),
+                                                     ",".join([str(v / len(processed_files)) for v in std_sum])))
+        
+        mean_sum /= len(processed_files)
+        std_sum /= len(processed_files)
+        np.save("mean_bgr.npy", mean_sum)
+        np.save("std_bgr.npy", std_sum)
+        return mean_sum, std_sum
+
+
+
 
     def point_in_range(self, point, data_range, margin=0):
         return ((data_range[0].start is None or point[0] - margin >= data_range[0].start) and (
