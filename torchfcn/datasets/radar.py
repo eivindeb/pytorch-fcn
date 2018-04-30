@@ -125,7 +125,7 @@ class RadarDatasetFolder(data.Dataset):
         self.chart_area_threshold = self.config["Parameters"].getint("ChartAreaThreshold", 10000)
         self.min_vessel_land_dist = self.config["Parameters"].getfloat("MinVesselLandDistance", 10)
         self.min_own_velocity = self.config["Parameters"].getfloat("MinOwnVelocity", 1)
-        self.downsampling_factor = self.config["Parameters"].getint("DownsamplingFactor", 1)
+        self.downsampling_factor = self.config["Parameters"].getfloat("DownsamplingFactor", 1)
         self.image_mode = self.config["Parameters"].get("ImageMode", "Grayscale")
 
         self.height_divisions = self.config["Parameters"].getint("HeightDivisions", 2)
@@ -876,9 +876,15 @@ class RadarDatasetFolder(data.Dataset):
                 self.logger.warning("Scaled AIS data could not be gathered for {}".format(self.data_path_to_rel_label_path(data_path)))
                 raise LabelSourceMissing
 
-            scaled_range = [scaled_ais_layer.shape[0] - round((scaled_ais_layer.shape[0] * self.downsampling_factor - self.image_height) / self.downsampling_factor),
-                            scaled_ais_layer.shape[1] - round((scaled_ais_layer.shape[1] * self.downsampling_factor - self.image_width) / self.downsampling_factor)]
-            scaled_ais_layer = scaled_ais_layer[:scaled_range[0], :scaled_range[1]]
+            #scaled_range = [scaled_ais_layer.shape[0] - round((scaled_ais_layer.shape[0] * self.downsampling_factor - self.image_height) / self.downsampling_factor),
+            #                scaled_ais_layer.shape[1] - round((scaled_ais_layer.shape[1] * self.downsampling_factor - self.image_width) / self.downsampling_factor)]
+            scaled_ais_layer = scaled_ais_layer[:label.shape[0], :label.shape[1]]
+
+            if scaled_ais_layer.shape[0] < label.shape[0]:
+                scaled_ais_layer = np.pad(scaled_ais_layer, ((0, label.shape[0] - scaled_ais_layer.shape[0]), (0, 0)), mode="constant")
+
+            if scaled_ais_layer.shape[1] < label.shape[1]:
+                scaled_ais_layer = np.pad(scaled_ais_layer, ((0, 0), (0, label.shape[1] - scaled_ais_layer.shape[1]),), mode="constant")
 
             label[scaled_ais_layer == 1] = self.LABEL_SOURCE["ais"]
 
@@ -924,6 +930,8 @@ class RadarDatasetFolder(data.Dataset):
 
                     if self.downsampling_factor > 1:
                         data = cv2.resize(data, None, fx=1 / self.downsampling_factor, fy=1 / self.downsampling_factor, interpolation=cv2.INTER_AREA)[:label.shape[0],:label.shape[1]]
+                    else:
+                        data = data[:label.shape[0], :label.shape[1]]
                 else:
                     data = data[:label.shape[0], :label.shape[1]]
 
