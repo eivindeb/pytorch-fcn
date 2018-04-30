@@ -239,12 +239,31 @@ class RadarDatasetFolder(data.Dataset):
             indexes = list(range(len(self)))
             indexes.remove(index)
             return self.__getitem__(random.choice(indexes))
+        try:
+            if self.coordinate_system == "Cartesian":
+                cart_path = osp.join("/mnt/lacie/cartesian/", osp.relpath(data_path, start=self.data_folder)).replace(".bmp", "")
+                try:
+                    cart = np.load("{}.npy".format(cart_path))
+                except:
+                    raise ValueError
+                    basename = osp.splitext(data_path)[0]
+                    t = self.data_loader.get_time_from_basename(basename)
+                    sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
+                    img = img[:lbl.shape[0], :lbl.shape[1]]
+                    #lbl = np.pad(lbl, ((0, 0), (0, 1400)), mode="constant")
+                    cart = self.data_loader.transform_image_from_sensor(t, sensor, sensor_index, dim=2828, scale_in=1, scale_out=3.39,
+                                                                       image=np.dstack((img, lbl)).astype(np.int16), use_gpu=True)
 
-        if self.coordinate_system == "Cartesian":
-            cart = self.data_loader.transform_image_from_sensor(t, sensor, sensor_index, dim=2828, scale=3.39,
-                                                               image=np.dstack((img, lbl)).astype(np.int16), use_gpu=True)
-            img = cart[:, :, 0].astype(np.uint8)
-            lbl = cart[:, :, 1].astype(np.int32)
+                    if not osp.exists(osp.dirname(cart_path)):
+                        makedirs(osp.dirname(cart_path))
+
+                    np.save(cart_path, cart.astype(np.int8))
+                img = cart[:, :, 0].astype(np.uint8)
+                lbl = cart[:, :, 1].astype(np.int32)
+        except:
+            indexes = list(range(len(self)))
+            indexes.remove(index)
+            return self.__getitem__(random.choice(indexes))
 
         img = img[data_range]
         lbl = lbl[data_range]
