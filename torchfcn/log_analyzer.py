@@ -75,6 +75,9 @@ class LogAnalyzer:
                 self.data["valid"][-1]["mean"] = {key: val.pop() for key, val in self.data["valid"][-1]["data"].items() if key != "filename"}
                 self.data["valid"][-1]["end_time"] = float(row["elapsed_time"]) + elapsed_time_base
 
+        self.total_time = self.data["train"][-1]["data"]["elapsed_time"][-1]
+        self.total_iteration = sum(len(d["data"]["train/loss"]) for d in self.data["train"])
+
     def validation_metric_histogram(self, metric, validation_idx=-1, fig=None, return_fig=False, **kwargs):
         try:
             data = self.data["valid"][validation_idx]["data"]["valid/{}".format(metric)]
@@ -90,6 +93,18 @@ class LogAnalyzer:
             return
         plt.title("Histogram for {} in validation on iteration {}".format(metric, iteration))
         plt.show()
+
+    def share_over_threshold(self, threshold, metric="mean_bj", validation_idx=-1):
+        try:
+            data = self.data["valid"][validation_idx]["data"]["valid/{}".format(metric)]
+        except Exception as e:
+            print("No data available for selected validation index and metric")
+            raise e
+
+        share = sum(1 for i in data if i >= threshold) / len(data)
+
+        return share
+
 
     def get_low_scoring_files(self, metric, percentile=1, mode="min", split="valid", split_idx=-1):
         data = np.asarray(self.data[split][split_idx]["data"]["{}/{}".format(split, metric)])
