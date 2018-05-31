@@ -17,7 +17,7 @@ import torchfcn
 import shutil
 #import ptsemseg.models.linknet as LinkNet
 #import ptsemseg.models.unet as Unet
-import pss.models.psp_net as psp_net
+import torchfcn.models.psp_net as psp_net
 import pss.models.gcn as gcn
 from ml.pytorch_refinenet.pytorch_refinenet.refinenet import RefineNet4Cascade as RefineNet
 
@@ -170,15 +170,15 @@ def main():
         fcn = False
         model_cfg = model_name
 
-    root = "/home/eivind/Documents/polarlys_datasets"
+    root = "/home/eivind/Documents/dev/ntnu-project/ml/pytorch-fcn/examples/radar/datasets/"
 
     if resume:
         checkpoint = torch.load(resume)
         out = checkpoint['out']
         dataset_name = checkpoint.get("dataset_name", "2018")
-        dataset_name = "2018"
+        #dataset_name = "2018"
         model_name = out.split("/")[-1].split("_")[1].split("-")[-1]
-        model_name = "PSPnet"
+        #model_name = "PSPnet"
         with open(osp.join(out, "config.yaml"), 'r') as f:
             cfg = yaml.load(f)
         train_cfg = osp.join(out, "polarlys_cfg_train.txt")

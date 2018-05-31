@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torchvision import models
+from torchfcn.models import resnet as resnet_models
 
 from utils import initialize_weights
 from utils.misc import Conv2dDeformable
@@ -80,7 +80,7 @@ class PSPNet(nn.Module):
                 CFARModule(20, 3, 1),
             ])
 
-        resnet = models.resnet101(in_channels=in_channels + (len(self.nn_cfar) if self.cfar else 0), pretrained=pretrained, group_norm=group_norm)
+        resnet = resnet_models.resnet101(in_channels=in_channels + (len(self.nn_cfar) if self.cfar else 0), pretrained=pretrained, group_norm=group_norm)
 
         if freeze is not None:
             for name, param in resnet.named_parameters():
