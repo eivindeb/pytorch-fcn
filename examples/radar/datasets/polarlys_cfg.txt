@@ -1,0 +1,31 @@
+[Paths]
+DataFolder = /nas0
+CacheFolder(s) = /data/polarlys/labels,/mnt/lacie/labels
+DataloaderCFG = /home/eivind/Documents/dev/sensorfusion/polarlys/dataloader.json
+
+[Parameters]
+CacheLabels = True
+RadarTypes = Radar0,Radar1,Radar2
+UnlabelChartData = False
+RemoveHiddenTargets = True
+Classes = background,vessel,land,unknown
+ClassWeights = 1,750,1,1
+RemoveFilesWithoutTargets = True
+MinDataIntervalSeconds = 0
+SkipProcessedFiles = True
+CoordinateSystem = Polar
+MaximumDiskUsage = 1600000000000,3000000000000
+SetSplits = 0.97,0.03,0
+WidthRegion = 0,2000
+HeightRegion = 0,4096
+HeightDivisions = 0
+WidthDivisions = 0
+Overlap = 0
+LandThreshold = 70
+IncludeWeatherData = False
+MinVesselLandDistance = 10
+MinOwnVelocity = 1
+DownsamplingFactor = 1
+ImageMode = Grayscale
+RangeNormalize = False
+
