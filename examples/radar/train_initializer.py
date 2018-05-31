@@ -15,12 +15,11 @@ import time
 
 import torchfcn
 import shutil
-import ptsemseg.models.pspnet as PSPNet
-import ptsemseg.models.linknet as LinkNet
-import ptsemseg.models.unet as Unet
+#import ptsemseg.models.linknet as LinkNet
+#import ptsemseg.models.unet as Unet
 import pss.models.psp_net as psp_net
 import pss.models.gcn as gcn
-from ml.pytorch_refinenet.pytorch_refinenet.refinenet import RefineNet4CascadePoolingImproved as RefineNet
+from ml.pytorch_refinenet.pytorch_refinenet.refinenet import RefineNet4Cascade as RefineNet
 
 configurations = {
     # same configuration as original work
@@ -54,7 +53,10 @@ configurations = {
         interval_validate=30000,
         interval_checkpoint=500,  # checkpoint every 10 minutes
         interval_weight_update=16,
-        pretrained=False,
+        pretrained=True,
+        freeze=None,
+        cfar=False,
+        group_norm=True,
     ),
     "GCN": dict(
         max_iteration=800000,
@@ -69,15 +71,27 @@ configurations = {
     ),
     "RefineNet": dict(
         max_iteration=800000,
-        lr=7e-11,  # the standard learning rate for VOC images (500x375) multiplied by ratio of radar dataset image size (1365x2000)
+        lr=5e-18,  # the standard learning rate for VOC images (500x375) multiplied by ratio of radar dataset image size (1365x2000)
         lr_decay=0.1,
         momentum=0.9,
         weight_decay=1e-4,
         interval_validate=30000,
-        interval_checkpoint=500,  # checkpoint every 10 minutes
+        interval_checkpoint=100,  # checkpoint every 10 minutes
         interval_weight_update=1,
         pretrained=False,
     ),
+    "LinkNet": dict(
+        max_iteration=800000,
+        lr=1e-10,  # the standard learning rate for VOC images (500x375) multiplied by ratio of radar dataset image size (1365x2000)
+        lr_decay=0.1,
+        momentum=0.9,
+        weight_decay=1e-4,
+        interval_validate=30000,
+        interval_checkpoint=100,  # checkpoint every 10 minutes
+        interval_weight_update=1,
+        pretrained=False,
+    ),
+
 }
 
 
@@ -139,7 +153,7 @@ here = osp.dirname(osp.abspath(__file__))
 def main():
     model_name = "PSPnet"
     dataset_name = "2018"
-    setup_name = "Pretrained1chFreezeNotFirstLast"
+    setup_name = "final6"
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', type=int, default=1,
@@ -162,9 +176,9 @@ def main():
         checkpoint = torch.load(resume)
         out = checkpoint['out']
         dataset_name = checkpoint.get("dataset_name", "2018")
-        #dataset_name = "2018"
+        dataset_name = "2018"
         model_name = out.split("/")[-1].split("_")[1].split("-")[-1]
-        #model_name = "PSPnet"
+        model_name = "PSPnet"
         with open(osp.join(out, "config.yaml"), 'r') as f:
             cfg = yaml.load(f)
         train_cfg = osp.join(out, "polarlys_cfg_train.txt")
@@ -177,6 +191,8 @@ def main():
 
     if "freeze" not in cfg:  # legacy compatability
         cfg.update({"freeze": None})
+    if "cfar" not in cfg:
+        cfg.update({"cfar": False})
 
     cuda = torch.cuda.is_available()
 
@@ -188,9 +204,11 @@ def main():
 
     data_folder = "/nas0/"
 
+    downsampling_factor = 3.3
+
     if not resume:
         if model_name == "PSPnet":
-            radar_kwargs = {"train": {"height_divisions": 7, "width_divisions": 0, "overlap": 0}, "valid": {"height_divisions": 1, "width_divisions": 0, "downsampling_factor": 1}}
+            radar_kwargs = {"train": {"height_divisions": 0, "width_divisions": 0, "overlap": 0}, "valid": {"height_divisions": 0, "width_divisions": 0}}
         elif fcn:
             radar_kwargs = {"train": {"height_divisions": 2, "width_divisions": 0}, "valid": {"height_divisions": 1, "width_divisions": 0}}
         elif model_name == "GCN":
@@ -204,11 +222,19 @@ def main():
             radar_kwargs.update({"valid": radar_kwargs["train"]})
     else:
         radar_kwargs = {"train": {}, "valid": {}}
+
+    radar_kwargs["train"].update({"downsampling_factor": downsampling_factor})
+    radar_kwargs["valid"].update({"downsampling_factor": downsampling_factor})
+
+    if cfg.get("pretrained", False):
+        radar_kwargs["train"].update({"image_mode": "RGB"})
+        radar_kwargs["valid"].update({"image_mode": "RGB"})
+
     kwargs = {'num_workers': 8, 'pin_memory': True} if cuda else {}
 
     train_loader = torch.utils.data.DataLoader(
         torchfcn.datasets.RadarDatasetFolder(
-            root, split='train', cfg=train_cfg, transform=True, dataset_name=dataset_name, min_data_interval=10, **radar_kwargs["train"]),
+            root, split='train', cfg=train_cfg, transform=True, dataset_name=dataset_name, min_data_interval=0, **radar_kwargs["train"]),
         batch_size=1, shuffle=False, **kwargs)
 
     val_loader = torch.utils.data.DataLoader(
@@ -228,7 +254,7 @@ def main():
         model = psp_net.PSPNet(num_classes=n_class, pretrained=cfg["pretrained"],
                                metadata_channels=14 if train_loader.dataset.metadata else 0,
                                in_channels=1 if train_loader.dataset.image_mode == "Grayscale" else 3,
-                               use_cfar_filters=False, use_aux=True, freeze=["layer1", "layer2", "layer3"])
+                               use_cfar_filters=cfg["cfar"], use_aux=True, freeze=None, group_norm=True)
     elif model_name == "fcn32s":
         model = torchfcn.models.FCN32s(n_class=n_class, metadata=train_loader.dataset.metadata)
     elif model_name == "fcn8s":

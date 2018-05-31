@@ -6,7 +6,6 @@ import json
 
 import numpy as np
 import PIL.Image
-import scipy.io
 import torch
 from torch.utils import data
 import datetime
@@ -25,6 +24,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from fcn.utils import label2rgb
 import copy
 import math
+import scipy
 
 
 """
@@ -243,14 +243,16 @@ class RadarDatasetFolder(data.Dataset):
             if self.coordinate_system == "Cartesian":
                 cart_path = osp.join("/mnt/lacie/cartesian/", osp.relpath(data_path, start=self.data_folder)).replace(".bmp", "")
                 try:
+                    #raise ValueError
                     cart = np.load("{}.npy".format(cart_path))
                 except:
-                    raise ValueError
+                    #raise ValueError
                     basename = osp.splitext(data_path)[0]
                     t = self.data_loader.get_time_from_basename(basename)
                     sensor, sensor_index = self.data_loader.get_sensor_from_basename(basename)
-                    img = img[:lbl.shape[0], :lbl.shape[1]]
-                    #lbl = np.pad(lbl, ((0, 0), (0, 1400)), mode="constant")
+                    #img = img[:lbl.shape[0], :lbl.shape[1]]
+                    lbl = np.pad(lbl, ((0, 0), (0, 1400)), mode="constant")
+                    lbl[lbl == -1] = 0
                     cart = self.data_loader.transform_image_from_sensor(t, sensor, sensor_index, dim=2828, scale_in=1, scale_out=3.39,
                                                                        image=np.dstack((img, lbl)).astype(np.int16), use_gpu=True)
 
@@ -349,8 +351,8 @@ class RadarDatasetFolder(data.Dataset):
         #ranges = [[0, 250], [250, 750], [750, 2000]]
         data -= means
         data /= stds
+        return data
         """
-
         bgr_image = np.load("/home/eivind/Documents/dev/ntnu-project/ml/pytorch-fcn/torchfcn/datasets/mean_bgr_filled.npy")
         bgr_image = bgr_image[:data.shape[1]]
         bgr_image = np.tile(bgr_image, (data.shape[0], 1))
@@ -530,6 +532,7 @@ class RadarDatasetFolder(data.Dataset):
     def reload_files_from_default_index(self):
         self.load_files_from_index(osp.join(self.dataset_folder, self.split + ".txt"))
 
+
     def load_files_from_index(self, index):
         with open(index, "r+") as file:
             lines = file.readlines()
@@ -551,18 +554,21 @@ class RadarDatasetFolder(data.Dataset):
                     line_edited = True
                 else:
                     target_locations = self.ais_targets_string_to_list(target_locations_string)
+                    
+                    if target_locations is None:  # ais target data missing, TODO: actually have to check if targets are hidden...
+                        ais_targets = self.get_ais_targets(filename)
+                        ais_targets_string = self.ais_targets_to_string(ais_targets)
+                        target_locations = self.ais_targets_string_to_list(ais_targets_string)
+
+                        line_edited = True
+                        edit_pos = line.rfind(";")
+
+                        line = line[:edit_pos + 1] + ais_targets_string
+
                     target_locations = [[loc[0] / self.downsampling_factor, loc[1] / self.downsampling_factor] for loc in target_locations]
 
                     for i, data_range in enumerate(self.data_ranges):
-                        if target_locations is None:  # ais target data missing, TODO: actually have to check if targets are hidden...
-                            ais_targets = self.get_ais_targets(filename)
-                            ais_targets_string = self.ais_targets_to_string(ais_targets)
-                            target_locations = self.ais_targets_string_to_list(ais_targets_string)
 
-                            line_edited = True
-                            edit_pos = line.rfind(";")
-
-                            line = line[:edit_pos + 1] + ais_targets_string
 
                         if not self.remove_files_without_targets or any(self.point_in_range(target, data_range, margin=30 / self.downsampling_factor) for target in target_locations):
                             self.files[self.split].append({ "data": self.get_data_path(filename),
@@ -601,23 +607,77 @@ class RadarDatasetFolder(data.Dataset):
 
             self.files[self.split] = new_files
 
-    def update_dataset_file(self, from_time=None, to_time=None):
-        def collect_data_files_recursively(parent):
-            for child in sorted(listdir(parent)):
-                if re.match("^[0-9-]*$", child):
-                    if from_time is None and to_time is None or len(child) == 10:
-                        yield from collect_data_files_recursively(osp.join(parent, child))
-                    else:
-                        child_datetime = datetime.datetime.strptime(child, "%Y-%m-%d{}".format("-%H" if len(child) > 10 else ""))
-                        if from_time is not None and to_time is not None and from_time <= child_datetime <= to_time:
-                            yield from collect_data_files_recursively(osp.join(parent, child))
-                        elif from_time is None and child_datetime <= to_time or to_time is None and child_datetime >= from_time:
-                            yield from collect_data_files_recursively(osp.join(parent, child))
-                elif child in self.radar_types:
-                    yield from collect_data_files_recursively(osp.join(parent, child))
-                elif child.endswith(".bmp"):
-                    yield osp.join(parent, child)
 
+    def collect_data_files_recursively(self, parent, from_time=None, to_time=None):
+        if from_time is not None:
+            from_time_hour = datetime.datetime(year=from_time.year, month=from_time.month, day=from_time.day,
+                                               hour=from_time.hour)
+        if to_time is not None:
+            to_time_hour = datetime.datetime(year=to_time.year, month=to_time.month, day=to_time.day, hour=to_time.hour)
+
+        for child in sorted(listdir(parent)):
+            if re.match("^[0-9-]*$", child):
+                if from_time is None and to_time is None or len(child) == 10:
+                    yield from self.collect_data_files_recursively(osp.join(parent, child), from_time, to_time)
+                else:
+                    child_datetime = datetime.datetime.strptime(child,
+                                                                "%Y-%m-%d{}".format("-%H" if len(child) > 10 else ""))
+                    if from_time is not None and to_time is not None and from_time_hour <= child_datetime <= to_time_hour:
+                        yield from self.collect_data_files_recursively(osp.join(parent, child), from_time, to_time)
+                    elif from_time is None and child_datetime <= to_time_hour or to_time is None and child_datetime >= from_time_hour:
+                        yield from self.collect_data_files_recursively(osp.join(parent, child), from_time, to_time)
+            elif child in self.radar_types:
+                yield from self.collect_data_files_recursively(osp.join(parent, child), from_time, to_time)
+            elif child.endswith(".bmp"):
+                if from_time is None and to_time is None:
+                    yield osp.join(parent, child)
+                else:
+                    child_datetime = datetime.datetime.strptime(child.replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S")
+                    if (from_time is None and to_time >= child_datetime) or (
+                            to_time is None and from_time <= child_datetime):
+                        yield osp.join(parent, child)
+                    elif from_time <= child_datetime <= to_time:
+                        yield osp.join(parent, child)
+
+    def find_streak_candidates(self, min_streak_length=120, from_time=None, to_time=None):
+        streak_start = None
+        streak_vessels = None
+        with open(osp.join(self.root, "streak_candidates.txt"), "a+") as index:
+            for file in self.collect_data_files_recursively(self.data_folder, from_time=from_time, to_time=to_time):
+                if self.min_own_velocity > 0 and self.get_own_vessel_velocity(file) < self.min_own_velocity:
+                    continue
+
+                ais_targets = self.get_ais_targets(file)
+
+                if len(ais_targets) == 0:
+                    continue
+
+                file_time = datetime.datetime.strptime(file.split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S")
+
+                ais_targets = self.ais_targets_to_list(ais_targets)
+                ais_targets_in_range = [t for t in ais_targets if self.width_region[0] <= t[1] <= self.width_region[1]]
+
+                if len(ais_targets_in_range) > 0:
+                    if streak_start is None:
+                        streak_start = file_time
+                        streak_vessels = []
+
+                    streak_vessels.append(len(ais_targets_in_range))
+                elif streak_start is not None:
+                    streak_length = abs(file_time - streak_start)
+                    if streak_length >= datetime.timedelta(seconds=min_streak_length):
+                        streak_string = "{}/{}/{}\n".format(file, streak_length, sum(streak_vessels) / len(streak_vessels))
+                        print("Added new streak:\n{}".format(streak_string))
+                        index.write(streak_string)
+                        index.flush()
+                    streak_start = None
+
+
+
+
+
+
+    def update_dataset_file(self, from_time=None, to_time=None):
         splits = ["train", "valid", "test"]
         splits.remove(self.split)
 
@@ -645,7 +705,7 @@ class RadarDatasetFolder(data.Dataset):
             #last_processed_time = datetime.datetime.strptime(last_processed, "%Y-%m-%d-%H_%M_%S")
             last_time = {radar_type: datetime.datetime(year=2000, month=1, day=1) for radar_type in self.radar_types}
             with open(osp.join(self.dataset_folder, self.split + ".txt"), "a") as index:
-                for file in tqdm.tqdm(collect_data_files_recursively(self.data_folder), desc="Filtering data files", leave=False):
+                for file in tqdm.tqdm(self.collect_data_files_recursively(self.data_folder, from_time, to_time), desc="Filtering data files", leave=False):
                     try:
                         if self.skip_processed_files and (file in files_without_targets or file in files_with_targets):
                             continue
@@ -808,15 +868,9 @@ class RadarDatasetFolder(data.Dataset):
         missing_files = []
         processed_files = []
 
-        if "train" not in self.files:
-            self.load_files_from_index(osp.join(self.dataset_folder, "train.txt"))
-
-        sorted_files = sorted(self.files["train"],
-                              key=lambda x: (datetime.datetime.strptime(x["data"].split("/")[-1].replace(".bmp", ""),
-                                                                       "%Y-%m-%d-%H_%M_%S"), x["range"]))
-        for i, entry in tqdm.tqdm(enumerate(sorted_files), total=len(sorted_files),
+        for i, entry in tqdm.tqdm(enumerate(self.files["train"]), total=len(self.files["train"]),
                               desc="Calculating mean for dataset"):
-            if i % 5000 == 0 and i != 0:
+            if i % 100 == 0 and i != 0:
                 print("Mean so far after {} images: {}".format(i, mean_sum/len(processed_files)))
             if entry["data"] in processed_files:
                 continue
@@ -934,7 +988,7 @@ class RadarDatasetFolder(data.Dataset):
                 label = ais.astype(np.int32)[self.height_region[0]:self.height_region[1], self.width_region[0]:self.width_region[1]] * self.LABEL_SOURCE["ais"]
 
             if not {"land", "islet", "unknown"}.isdisjoint(self.class_names) or self.unlabel_chart_data:
-                chart = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, binary=True, only_first_range_step=True if self.image_region[1] <= 2000 else False)
+                chart = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, binary=True, only_first_range_step=True if self.width_region[1] <= 2000 else False)
 
                 if chart is None:
                     self.logger.warning("Chart data could not be gathered for {}".format(self.data_path_to_rel_label_path(data_path)))
@@ -949,7 +1003,7 @@ class RadarDatasetFolder(data.Dataset):
                 if index is not None:
                     self.files[self.split][index]["label"] = save_path
 
-        label = label[:self.image_height, :self.image_width]  # TODO: maybe take in data range?
+        label = label[:4096, :2000]  # TODO: maybe take in data range?
 
         if self.downsampling_factor > 1:
             label[label == self.LABEL_SOURCE["ais"]] = self.LABELS["background"]
@@ -981,6 +1035,7 @@ class RadarDatasetFolder(data.Dataset):
             label[label == self.LABEL_SOURCE["ais"]] = self.LABELS["vessel"]
 
             if self.min_vessel_land_dist > 0:
+                #label = cc.remove_vessels_close_to_land(label, distance_threshold=self.min_vessel_land_dist / self.downsampling_factor)
                 label = cc.remove_vessels_close_to_land(label, distance_threshold=self.min_vessel_land_dist)
         else:
             label[label == self.LABEL_SOURCE["ais"]] = self.LABELS["background"]
@@ -989,6 +1044,9 @@ class RadarDatasetFolder(data.Dataset):
             label[label == self.LABEL_SOURCE["chart"]] = self.LABELS["unlabeled"]
         else:
             chart_data = (label == self.LABEL_SOURCE["chart"])
+            #chart_classified = cc.classify_chart(chart_data,
+            #                                     classes=[self.LABELS["islet"], self.LABELS["land"]],
+            #                                     area_threshold=self.chart_area_threshold / self.downsampling_factor)
             chart_classified = cc.classify_chart(chart_data,
                                                  classes=[self.LABELS["islet"], self.LABELS["land"]],
                                                  area_threshold=self.chart_area_threshold)
@@ -1090,7 +1148,7 @@ class RadarDatasetFolder(data.Dataset):
                     ais = ais[self.height_region[0]:self.height_region[1], self.width_region[0]:self.width_region[1]]
                 label[ais == 1] = self.LABEL_SOURCE["ais"]
             if "chart" in components:
-                land = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, binary=True, only_first_range_step=True if self.image_region[1] <= 2000 else False)
+                land = self.data_loader.load_chart_layer_sensor(t, sensor, sensor_index, binary=True, only_first_range_step=True if self.width_region[1] <= 2000 else False)
                 if isinstance(land, list):
                     self.logger.warning("Label {} not updated.\nChart data could not be gathered".format(label_path))
                     processed_labels.add(label_path)
@@ -1282,7 +1340,7 @@ class RadarDatasetFolder(data.Dataset):
         plt.colorbar()
         plt.show()
 
-    def show_image_with_label(self, index=None, data_path=None):
+    def show_image_with_label(self, index=None, data_path=None, lbl=None, save_name=None, n_labels=4):
         if index is None and data_path is None:
             return
 
@@ -1299,12 +1357,21 @@ class RadarDatasetFolder(data.Dataset):
         if len(img.shape) == 2:
             img = np.repeat(img[:, :, np.newaxis], 3, 2)
 
-        lbl = self.get_label(data_path, label_path, index=index)[data_range]
+        if lbl is None:
+            lbl = self.get_label(data_path, label_path, index=index)[data_range]
 
-        print(np.transpose(np.where(lbl == 1)))
-        res = label2rgb(lbl, img, n_labels=len(self.class_names))
+        #print(np.transpose(np.where(lbl == 1)))
+        gt_count, gt_cc, gt_stats, gt_centroids = cc.get_connected_components(lbl == 1, connectivity=8)
+        gt_centroids[:, 0], gt_centroids[:, 1] = gt_centroids[:, 1], gt_centroids[:, 0].copy()
+        print(gt_centroids[1:, :])
+        res = label2rgb(lbl, img, n_labels=n_labels)
         plt.imshow(res)
         plt.show()
+        if save_name is not None:
+            plt.imsave("figures/{}".format(save_name), res)
+            res = cv2.resize(res, None, fx=1 / 9.9, fy=1 / 9.9 , interpolation=cv2.INTER_AREA)
+            plt.imsave("figures/resize/{}".format(save_name), res,
+                       format="png")
 
 
     def _colorbar(self, mappable):
@@ -1314,19 +1381,139 @@ class RadarDatasetFolder(data.Dataset):
         cax = divider.append_axes("right", size="5%", pad=0.05)
         return fig.colorbar(mappable, cax=cax)
 
+    def heatmap(self, data_path):
+        img = self.load_image(data_path)[:, :2000]
+        img = cv2.resize(img, None, fx=1 / 3.3, fy=1 / 3.3, interpolation=cv2.INTER_AREA)
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+        hmaps = np.load(osp.join("/data/polarlys/confidences", data_path.split("/")[-1].replace(".bmp", ".npy")))
+        for hmap_i in range(hmaps.shape[0]):
+            hmap = hmaps[hmap_i, :, :]
+            if hmap.dtype != np.uint8:
+                hmap = (hmap * 255).astype(np.uint8)
+            hmap = cv2.applyColorMap(hmap, cv2.COLORMAP_JET)
+            res = cv2.addWeighted(hmap, 0.7, img, 0.3, 0)
+            res = cv2.cvtColor(res, cv2.COLOR_BGR2RGB)
+            plt.imsave("figures/{}-{}".format(hmap_i, data_path.split("/")[-1].replace(".bmp", ".npy")), res, format="png")
+            plt.imshow(res)
+            plt.show()
+            res = cv2.resize(res, None, fx= 1/3, fy=1/3, interpolation=cv2.INTER_AREA)
+            plt.imsave("figures/resize/{}-{}".format(hmap_i, data_path.split("/")[-1].replace(".bmp", ".npy")), res, format="png")
+
 
 if __name__ == "__main__":
     from polarlys.dataloader import DataLoader
-
     #np.s_[:int(4096/3), 0:2000], np.s_[int(4096/3):int(2*4096/3), 0:2000], np.s_[int(2*4096/3):, 0:2000]
-    dataset = RadarDatasetFolder(root="/home/eivind/Documents/polarlys_datasets", cfg="/home/eivind/Documents/polarlys_datasets/polarlys_cfg.txt", split="train", dataset_name="test")
+    dataset = RadarDatasetFolder(root="/home/eivind/Documents/polarlys_datasets", cfg="/home/eivind/Documents/polarlys_datasets/polarlys_cfg.txt", split="train", dataset_name="test", min_data_interval=0, remove_files_without_targets=True, range_normalize=False)
 
+    if True:
+        #img, lbl = dataset[3]
+        dataset.show_image_with_label(0, save_name=dataset.get_filename(0))
+        #dataset.show_image_with_label(6, save_name=dataset.get_filename(6))
+        exit(0)
+    if True:
+        dataset.heatmap(dataset.files["train"][6]["data"])
+        exit(0)
     if False:
-        if False:
+        #dataset.shuffle(0)
+        with open("streak_verifier.txt", "a+") as index:
+            for i in range(0, len(dataset)):
+                dataset.show_image_with_label(index=i)
+                res = input("Write to {} ({}) index? [y/n]".format(i, dataset.get_filename(i, True)))
+                if res == "y":
+                    index.write("{};\n".format(dataset.get_data_path(dataset.get_filename(i, True, True))))
+                    index.flush()
+    if True:
+        t = datetime.datetime.strptime(dataset.get_filename(0), "%Y-%m-%d-%H_%M_%S")
+        img = dataset.data_loader.load_image(t, 1, 0)
+        img2 = dataset.data_loader.load_image(t + datetime.timedelta(seconds=10), 1, 0)
+        img3 = dataset.data_loader.load_image(t + datetime.timedelta(seconds=300), 1, 0)
+        print(dataset.get_filename(index=-1))
+        exit(0)
+    if False:
+        dataset.radar_types = ["Radar1"]
+        dataset.min_data_interval = 0
+        dataset.find_streak_candidates(from_time=datetime.datetime(year=2018, month=1, day=3, hour=7))
+    if False:
+        dataset_streak = RadarDatasetFolder(root="/home/eivind/Documents/polarlys_datasets", cfg="/home/eivind/Documents/polarlys_datasets/polarlys_cfg.txt", split="test", dataset_name="streak5", min_data_interval=0, remove_files_without_targets=False, range_normalize=False)
+        dataset.show_image_with_label(-1)
+        exit(0)
+    if False:
+        exit(0)
+        data_path = "/nas0/2017-11-24/2017-11-24-21/Radar0/2017-11-24-21_06_52.bmp"
+        img = cv2.imread("/nas0/2017-11-24/2017-11-24-21/Radar0/2017-11-24-21_06_52.bmp", 0)
+        #lbl = dataset.get_label(data_path)
+        #print(np.transpose(np.where(lbl == 1)))
+        #exit(0)
+        #lbl = np.pad(lbl, ((0, 0), (0, 1400)), mode="constant")
+        if len(img.shape) == 2:
+            img = np.repeat(img[:, :, np.newaxis], 3, 2)
+
+        #res = label2rgb(lbl, img, n_labels=len(dataset.class_names))
+        #plt.imshow(res)
+        #plt.show()
+        res = img
+
+        basename = osp.splitext(data_path)[0]
+        t = dataset.data_loader.get_time_from_basename(basename)
+        sensor, sensor_index = dataset.data_loader.get_sensor_from_basename(basename)
+        y = dataset.data_loader.transform_image_from_sensor(t, sensor, sensor_index, dim=2828, scale_in=1, scale_out=3.39,
+                                                                   image=res, use_gpu=False)
+        #y = cv2.linearPolar(x, (0, 0), 2828, cv2.WARP_INVERSE_MAP)
+        plt.imshow(y)
+        plt.show()
+        plt.imsave("radar_example_cart.png", y)
+        exit(0)
+    if False:
+        print(dataset.get_mean())
+        exit(0)
+    if False:
+        
+        from scipy.optimize import curve_fit
+
+        def func(x, a, b, c, d):
+            return a*np.exp(-b*x) + c*np.exp(-d*x)
+
+        mean_bgr = np.load("mean_bgr.npy")
+        mean_bgr = mean_bgr[~np.isnan(mean_bgr)]
+        xs = np.arange(start=0, stop=mean_bgr.shape[0], step=1)
+        popt, pcov = curve_fit(func, xs, mean_bgr)
+
+        long_x = np.arange(start=1438, stop=2000, step=1)
+        new = func(long_x, *popt)
+        new_mean_bgr = np.concatenate((mean_bgr, new))
+        np.save("mean_bgr_filled.npy", new_mean_bgr)
+        plt.plot(range(2000), new_mean_bgr)
+        exit(0)
+    if False:
+        #print(dataset.get_distribution_statistics())
+        #exit(0)
+        img = dataset.load_image(dataset.files["train"][0]["data"])[:, :2000]
+        plt.imsave("nonorm.png", img)
+
+        #dataset.show_label(label=img)
+        img = img.astype(np.float64)
+        norm_img = dataset.apply_range_normalization(img)
+        plt.imsave("norm1.png", norm_img)
+        #dataset.show_label(label=norm_img)
+        exit(0)
+        ranges = [[0, 100], [100, 500], [500, 1000], [1000, 2000]]
+        for i, r in enumerate(ranges):
+            hist_homo, bins = np.histogram(norm_img[:, r[0]:r[1]].ravel(), 256, [-50, 200])
+            plt.bar(bins[:-1], hist_homo)
+            plt.title("Homo {}".format(" ".join(map(str, ranges[i]))))
+            plt.show()
+    
+            hist, bins = np.histogram(img[:, r[0]:r[1]].ravel(), 256, [0, 256])
+            plt.bar(bins[:-1], hist)
+            plt.title("img {}".format(" ".join(map(str, ranges[i]))))
+            plt.show()
+        exit(0)
+    if False:
+        if True:
             files = dataset.files[dataset.split]
             new_files = []
 
-            from_time = datetime.datetime(year=2017, month=10, day=28, hour=4, minute=0, second=0)
+            from_time = datetime.datetime(year=2017, month=10, day=27, hour=2, minute=0, second=0)
             to_time = datetime.datetime(year=2018, month=10, day=28, hour=7, minute=38, second=53)
             for file in files:
                 file_time = datetime.datetime.strptime(file["data"].split("/")[-1].replace(".bmp", ""), "%Y-%m-%d-%H_%M_%S")
@@ -1341,36 +1528,161 @@ if __name__ == "__main__":
             dataset.files["train"] = dataset.files["train"][92693:]
         dataset.update_cached_labels(("ais", "chart", "unlabeled"))
         #dataset.update_dataset_file(from_time=datetime.datetime(year=2017, month=11, day=27, hour=20, minute=0))
-    if True:
-        basename = osp.splitext(dataset.files["train"][0]["data"])[0]
-        t = dataset.data_loader.get_time_from_basename(basename)
-        sensor, sensor_index = dataset.data_loader.get_sensor_from_basename(basename)
+    if False:
+        from skimage import exposure
+        ranges = [[0, 5], [0, 10], [0, 15], [0, 20], [0, 25]]
+        hist =[np.zeros((256), dtype=np.int64) for i in range(len(ranges))]
+        for entry in tqdm.tqdm(dataset.files["train"], total=len(dataset.files["train"])):
+            img = dataset.load_image(entry["data"])
+            for i, r in enumerate(ranges):
+                cumsum, bin_centers = exposure.cumulative_distribution(img[:, r[0]:r[1]])
+                hist_img, bins = np.histogram(img[:, r[0]:r[1]].ravel(), 256, [0, 256])
+                hist[i] += hist_img
 
-        ais_targets = dataset.data_loader.load_ais_targets_sensor(t, sensor, sensor_index)
+        for i in range(len(hist)):
+            plt.bar(bins[:-1], hist[i])
+            plt.title(str(" ".join(map(str, ranges[i]))))
+            plt.show()
+            print(np.argmin(hist[i][hist[i] > 0]))
+        exit(0)
+    if False:
+        img, lbl = dataset[0]
+        exit(0)
+        print("yes, this is doge")
+        mean = 0
+        pics = 0
+        last_img = None
+        for entry in tqdm.tqdm(dataset.files["train"], total=len(dataset.files["train"])):
+            if entry["data"] != last_img:
+                img = dataset.load_image(entry["data"])[:, 20:]
+                last_img = entry["data"]
 
+            homo_img = dataset.homomorphic_filtering(img=img[dataset.data_ranges[entry["range"]]].copy())
+            mean += np.mean(homo_img)
+            pics += 1
 
+            if pics % 20 == 0:
+                print("Mean so far: {}".format(mean/pics))
+                #Mean so far: 55.59096748046876 after 20
+
+        print("Mean: {}".format(mean/pics))
+        exit(0)
+
+        if False:
+            print("hello?")
+            ranges = [[0, 100], [0, 500], [0, 2000]]
+            homo_img = dataset.homomorphic_filtering(dataset.files["train"][0]["data"])
+
+            img = dataset.load_image(dataset.files["train"][0]["data"])[:1000, 25:2000]
+
+            for i, r in enumerate(ranges):
+                hist_homo, bins = np.histogram(homo_img[:, r[0]:r[1]].ravel(), 256, [0, 256])
+                plt.bar(bins[:-1], hist_homo)
+                plt.title("Homo {}".format(" ".join(map(str, ranges[i]))))
+                plt.show()
+
+                hist, bins = np.histogram(img[:, r[0]:r[1]].ravel(), 256, [0, 256])
+                plt.bar(bins[:-1], hist)
+                plt.title("img {}".format(" ".join(map(str, ranges[i]))))
+                plt.show()
+            plt.imshow(homo_img)
+            plt.title("homo")
+            plt.show()
+            plt.imshow(img)
+            plt.show()
+            #img, lbl = dataset[0]
+            #img = img[:, 25:]
+            #dataset.show_label(label=img)
+            exit(0)
+        dataset = RadarDatasetFolder(root="/home/eivind/Documents/polarlys_datasets",
+                                     cfg="/home/eivind/Documents/polarlys_datasets/polarlys_cfg.txt", split="valid",
+                                     dataset_name="2018", remove_files_without_targets=True, height_divisions=0,
+                                     width_divisions=0, min_data_interval=5*60)
+        for idx in tqdm.tqdm(range(0, len(dataset)), total=len(dataset)):
+            img, lbl = dataset[idx]
+        exit()
+    if False:
         dataset_collect = RadarDatasetFolder(root="/home/eivind/Documents/polarlys_datasets",
-                                             cfg="/home/eivind/Documents/polarlys_datasets/polarlys_cfg.txt",
-                                             split="train", dataset_name="lacie")
-        dataset_collect.update_dataset_file(from_time=datetime.datetime(year=2017, month=11, day=30, hour=7, minute=38))
+                                             cfg="/home/eivind/Documents/polarlys_datasets/polarlys_cfg_lacie.txt",
+                                             split="train", dataset_name="lacie_interval", min_data_interval=5*60,
+                                             coordinate_system="Polar", height_divisions=0, width_divisions=0)
+        dataset_collect.update_dataset_file(from_time=datetime.datetime(year=2018, month=1, day=9, hour=2, minute=0))
+    elif False: # streak collecting
+        dataset_collect = RadarDatasetFolder(root="/home/eivind/Documents/polarlys_datasets",
+                                             cfg="/home/eivind/Documents/polarlys_datasets/polarlys_cfg_lacie.txt",
+                                             split="test", dataset_name="streak5", min_data_interval=0, height_divisions=0,
+                                             width_divisions=0, radar_types=["Radar1"], remove_files_without_targets=True,
+                                             skip_processed_files=False)
+        dataset_collect.update_dataset_file(from_time=datetime.datetime(year=2018, month=1, day=31, hour=2, minute=47),
+                                            to_time=datetime.datetime(year=2018, month=1, day=31, hour=2, minute=49))
     elif False:
         print(dataset.get_mean())
     elif False:
         files_to_update = []
         processed_files = set()
-        for file in tqdm.tqdm(dataset.files["train"], total=len(dataset.files["train"])):
+        dataset_valid = RadarDatasetFolder(root="/home/eivind/Documents/polarlys_datasets",
+                                           cfg="/home/eivind/Documents/polarlys_datasets/polarlys_cfg.txt",
+                                           split="valid", dataset_name="2018")
+        all_files = dataset.files["train"]
+        all_files.extend(dataset_valid.files["valid"])
+        for file in tqdm.tqdm(all_files, total=len(all_files)):
             if file["data"] in processed_files:
                 continue
-            lbl = np.load(file["label"])
-            if np.any((lbl == 3) | (lbl == -1)):
+            try:
+                lbl = np.load(file["label"])
+            except:
+                files_to_update.append(file)
+                processed_files.add(file["data"])
+                print("Could not load label for {}".format(file["data"]))
+                continue
+            if not np.any(lbl == dataset.LABEL_SOURCE["chart"]):
                 files_to_update.append(file)
             processed_files.add(file["data"])
         dataset.files["train"] = files_to_update
+        with open("labels_to_update.txt", "a+") as cached_res:
+            data_paths = [f["data"] for f in files_to_update]
+            cached_res.writelines(data_paths)
         dataset.update_cached_labels(("ais", "chart", "unlabeled"))
     elif False:
+        test = dataset.get_weather_data(dataset.files["train"][0]["data"])
+        dataset.show_image_with_label(data_path="Radar0/2017-10-26-16_12_55.bmp")
+        test = dataset.get_label("/nas0/2018-02-23/2018-02-23-13/Radar1/2018-02-23-13_00_04.bmp")
         for i in range(len(dataset.files["train"])):
-            dataset.show_image_with_label(i)
+            img, lbl = dataset[i]
         img, lbl = dataset[0]
+    elif True:
+        with open("../low_scoring_files_acc_cls_vessel.txt", "r") as file_index:
+            lines = file_index.readlines()
+            for line in lines:
+                line = line.strip()
+                print(line)
+                dataset.show_image_with_label(data_path=line)
+    elif False:
+        processed_files = set()
+        files_with_all_land = []
+        dataset_valid = RadarDatasetFolder(root="/home/eivind/Documents/polarlys_datasets",
+                                           cfg="/home/eivind/Documents/polarlys_datasets/polarlys_cfg.txt",
+                                           split="valid", dataset_name="2018", HeightDivisons=0)
+        all_files = dataset.files["train"]
+        all_files.extend(dataset_valid.files["valid"])
+        for file in tqdm.tqdm(all_files, total=len(all_files)):
+            if file["data"] in processed_files:
+                continue
+            try:
+                lbl = np.load(file["label"])
+            except:
+                processed_files.add(file["data"])
+                print("Could not load label for {}".format(file["data"]))
+                continue
+            if np.all(lbl[:, 0] == dataset.LABEL_SOURCE["chart"]):
+                files_with_all_land.append(file)
+            processed_files.add(file["data"])
+        with open("files_with_all_col0_land.txt", "a+") as cached_res:
+            data_paths = [f["data"] for f in files_with_all_land]
+            cached_res.writelines(data_paths)
+
+
+
 
     #dataset.redistribute_set_splits([0.97, 0.03, 0])
     #dataset.show_image_with_label(5000)

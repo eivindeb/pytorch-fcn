@@ -169,63 +169,69 @@ class Trainer(object):
 
         crash_batch_idx = -2
 
+        confusion_matrix = np.zeros((self.n_class, self.n_class), dtype=np.int64)
         metrics = np.zeros((len(self.val_loader), self.valid_headers_count))
         hist = np.zeros((self.n_class, self.n_class))
-        for batch_idx, batch in tqdm.tqdm(
-                enumerate(self.val_loader), total=len(self.val_loader),
-                desc='Valid iteration=%d' % self.iteration, ncols=80,
-                leave=False):
+        with torch.no_grad():
+            for batch_idx, batch in tqdm.tqdm(
+                    enumerate(self.val_loader), total=len(self.val_loader),
+                    desc='Valid iteration=%d' % self.iteration, ncols=80,
+                    leave=False):
 
-            data, target = batch[0].cuda(), batch[1].cuda()
-            data, target = Variable(data, volatile=True), Variable(target)
+                data, target = batch[0].cuda(), batch[1].cuda()
+                data, target = Variable(data), Variable(target)
 
-            if self.metadata:
-                metadata = batch[2].cuda()
-                metadata = Variable(metadata, volatile=True)
-                score = self.model(data, metadata)
-            else:
-                score = self.model(data)
+                if self.metadata:
+                    metadata = batch[2].cuda()
+                    metadata = Variable(metadata)
+                    score = self.model(data, metadata)
+                else:
+                    score = self.model(data)
 
-            try:
-                loss = cross_entropy2d(score, target, weight=torch.from_numpy(self.train_loader.dataset.class_weights).float().cuda(),
-                                   size_average=self.size_average)
-            except ValueError:
-                free_memory(locals())
-                filename = self.train_loader.dataset.files["train"][batch_idx]["data"][0]
-                self.logger.warning("Whole label for {} is unlabeled (-1)".format(filename))
-                continue
-            if np.isnan(float(loss.data[0])):
-                free_memory(locals())
-                filename = self.val_loader.dataset.files["valid"][batch_idx]["data"][0].split("/")
-                self.logger.warning("Loss was NaN while validating\n:image {}".format(filename))
-                continue
+                try:
+                    loss = cross_entropy2d(score, target, weight=torch.from_numpy(self.train_loader.dataset.class_weights).float().cuda(),
+                                       size_average=self.size_average)
+                except ValueError:
+                    free_memory(locals())
+                    filename = self.train_loader.dataset.files["train"][batch_idx]["data"][0]
+                    self.logger.warning("Whole label for {} is unlabeled (-1)".format(filename))
+                    continue
+                if np.isnan(loss.item()):
+                    free_memory(locals())
+                    filename = self.val_loader.dataset.files["valid"][batch_idx]["data"][0].split("/")
+                    self.logger.warning("Loss was NaN while validating\n:image {}".format(filename))
+                    continue
 
-            val_loss = float(loss.data[0]) / len(data)
+                val_loss = loss.item() / len(data)
 
 
-            imgs = data.data.cpu()
-            lbl_pred = score.data.max(1)[1].cpu().numpy()[:, :, :]
-            lbl_true = target.data.cpu()
+                imgs = data.data.cpu()
+                lbl_pred = score.data.max(1)[1].cpu().numpy()[:, :, :]
+                lbl_true = target.data.cpu()
 
-            if len(visualizations) < 9:
-                for img, lt, lp in zip(imgs, lbl_true, lbl_pred):
-                    img, lt = self.val_loader.dataset.untransform(img, lt)
-                    if len(img.shape) == 2:
-                        img = np.repeat(img[:, :, np.newaxis], 3, 2)
-                    viz = fcn.utils.visualize_segmentation(
-                        lbl_pred=lp, lbl_true=lt, img=img, n_class=self.n_class)
-                    visualizations.append(viz)
+                if len(visualizations) < 9:
+                    for img, lt, lp in zip(imgs, lbl_true, lbl_pred):
+                        img, lt = self.val_loader.dataset.untransform(img, lt)
+                        if len(img.shape) == 2:
+                            img = np.repeat(img[:, :, np.newaxis], 3, 2)
+                        viz = fcn.utils.visualize_segmentation(
+                            lbl_pred=lp, lbl_true=lt, img=img, n_class=self.n_class)
+                        visualizations.append(viz)
 
-            batch_metrics = [val_loss]
-            batch_metrics.extend(list(self.flatten(torchfcn.utils.label_accuracy_score(lbl_true.numpy(), lbl_pred, self.n_class))))
-            batch_metrics.extend(torchfcn.utils.boundary_jaccard(lbl_true.numpy(), lbl_pred, range(self.n_class)))
-            metrics[batch_idx, :] = batch_metrics
+                batch_confusion_matrix = torchfcn.utils.fast_hist(lbl_true.numpy(), lbl_pred, self.n_class)
+                confusion_matrix += batch_confusion_matrix
+                batch_metrics = [val_loss]
+                batch_metrics.extend(list(self.flatten(torchfcn.utils.label_accuracy_score_from_hist(batch_confusion_matrix))))
+                batch_metrics.extend(torchfcn.utils.boundary_jaccard(lbl_true.numpy(), lbl_pred, range(self.n_class)))
+                metrics[batch_idx, :] = batch_metrics
 
         out = osp.join(self.out, 'visualization_viz')
         if not osp.exists(out):
             os.makedirs(out)
         out_file = osp.join(out, 'iter%012d.jpg' % self.iteration)
         scipy.misc.imsave(out_file, fcn.utils.get_tile_image(visualizations))
+
+        metrics_mean = torchfcn.utils.label_accuracy_score_from_hist(confusion_matrix)
 
         with open(osp.join(self.out, 'log.csv'), 'a') as f:
             elapsed_time = \
@@ -239,7 +245,7 @@ class Trainer(object):
                 f.write(','.join(log) + '\n')
 
             log = [self.epoch, self.iteration, ""] + [''] * self.train_headers_count + \
-                    list(np.nanmean(metrics, axis=0)) + [elapsed_time]
+                  [np.nanmean(metrics[:, 0], axis=0)] + list(self.flatten(metrics_mean)) + list(np.nanmean(metrics[:, -(1 + self.n_class):], axis=0)) + [elapsed_time]
 
             log = map(str, log)
             f.write(','.join(log) + '\n')
@@ -261,6 +267,11 @@ class Trainer(object):
         if is_best:
             shutil.copy(osp.join(self.out, 'checkpoint.pth.tar'),
                         osp.join(self.out, 'model_best.pth.tar'))
+
+        if not osp.exists(osp.join(self.out, "cm")):
+            os.makedirs(osp.join(self.out, "cm"))
+
+        np.save(osp.join(self.out, osp.join("cm", "iter{}.npy".format(self.iteration))), confusion_matrix)
 
         if training:
             self.model.train()
@@ -303,14 +314,15 @@ class Trainer(object):
 
         start_idx = self.iteration % len(self.train_loader)
         if start_idx != 0:
-            print("Resuming from checkpoint during epoch, starting at iteration {}".format(start_idx))
+            print("Resuming from checkpoint at iteration {}".format(self.iteration))
+            print("Checkpoint during epoch, starting at iteration {}/{} in epoch".format(start_idx, len(self.train_loader)))
 
         for batch_idx, batch in tqdm.tqdm(enumerate(self.train_loader.iter_from(start_idx)),
                                           total=len(self.train_loader) - start_idx,
                                           desc='Train epoch=%d' % self.epoch, ncols=80,
                                           leave=False):
 
-            if self.iteration % self.interval_validate == 0 and self.iteration != 0:
+            if self.iteration % self.interval_validate == 0 and self.iteration != 0 and batch_idx != 0:
                 self.validate()
 
             assert self.model.training
@@ -351,7 +363,7 @@ class Trainer(object):
 
             loss /= batch_size  # average loss over batch
 
-            if np.isnan(float(loss.data[0])):
+            if np.isnan(loss.item()):
                 print("nan loss")
                 free_memory(locals())
                 self.logger.warning("Loss was NaN while training\n:image {}".format(self.train_loader.dataset.get_filename(batch_idx)))
@@ -371,10 +383,10 @@ class Trainer(object):
             with open(osp.join(self.out, 'log.csv'), 'a') as f:
                 elapsed_time = (datetime.datetime.now(pytz.timezone('Europe/Oslo')) - self.timestamp_start).total_seconds()
 
-                log = [self.epoch, self.iteration, self.train_loader.dataset.get_filename(batch_idx, with_radar=True)] + [loss.data[0]]
+                log = [self.epoch, self.iteration, self.train_loader.dataset.get_filename(batch_idx, with_radar=True)] + [loss.item()]
 
                 if self.aux:
-                    log.append(aux_loss.data[0])
+                    log.append(aux_loss.item())
 
                 if self.train_class_stats is not None:
                     log.append(metrics[0])
@@ -391,7 +403,7 @@ class Trainer(object):
                 f.write(','.join(log) + '\n')
 
             if self.scheduler is not None:
-                self.scheduler.step(loss.data[0])
+                self.scheduler.step(loss.item())
 
             self.iteration += 1
 
@@ -415,14 +427,18 @@ class Trainer(object):
             if self.iteration >= self.max_iter:
                 break
 
+
     def train(self):
-        try:
-            max_epoch = int(math.ceil(1. * self.max_iter / len(self.train_loader)))
-            for epoch in tqdm.trange(self.epoch, max_epoch, desc='Train', ncols=80):
-                self.epoch = epoch
-                self.train_epoch()
-                if self.iteration >= self.max_iter:
-                    break
+        #try:
+        max_epoch = int(math.ceil(1. * self.max_iter / len(self.train_loader)))
+        for epoch in tqdm.trange(self.epoch, max_epoch, desc='Train', ncols=80):
+            self.epoch = epoch
+            if epoch > 0 and type(self.train_loader.sampler).__name__ == "RandomSampler":
+                self.restart_script()
+            self.train_epoch()
+            if self.iteration >= self.max_iter:
+                break
+        """
         except RuntimeError as e:
             print(e)
             traceback.print_stack()
@@ -439,6 +455,7 @@ class Trainer(object):
             print('--------------')
             self.logger.exception("Unexpected error")
             self.restart_script()
+        """
 
     def restart_script(self, resume=True):
         print("RESTARTING SCRIPT")

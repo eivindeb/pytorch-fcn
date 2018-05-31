@@ -133,9 +133,25 @@ def process_label(data, lbl):
 
     lbl[(chart_classified == 0) & (chart_data == 1) & (hidden_by_land_mask == 1)] = 3
 
-    return lbl
+    lbl = remove_vessels_close_to_land(lbl, chart_data)
+    #if p:
+    #    res = np.zeros((4096, 2000, 3), dtype=np.uint8)
+    #    res[:, :, 0] = data
+    #    res[:, :, 1] = chart_data * 255
+    #    res[:,:, 2] = (lbl == 1).astype(np.uint8) * 255
 
-    return bjs
+    #    plt.figure(1)
+    #    plt.imshow(data)
+    #    plt.figure(2)
+    #    plt.imshow(res)
+    #    #plt.show()
+    #    #plt.show()
+    #    #fig3.show()
+    #    plt.show()
+    #    #plot(data, label, lbl)
+    #    print("tjohei")
+
+    return lbl
 
 
 if __name__ == "__main__":
@@ -178,7 +194,7 @@ if __name__ == "__main__":
         label[3050: 3450, 1800:1900] = 1
         retval, cc_labels, stats, centroids = get_connected_components(label, 8)
         get_f1_score(label, {"land": {"image_value": 2}}, img=data_img)
-    elif True:
+    elif False:
         root = "/home/eivind/Documents/polarlys_datasets"
         dataset = torchfcn.datasets.RadarDatasetFolder(root, split='valid', cfg=osp.join(root, "polarlys_cfg.txt"), transform=False, dataset_name="2018")
         img, lbl = dataset[1]
@@ -188,4 +204,11 @@ if __name__ == "__main__":
         data_ranges = [np.s_[:int(4096/3), :], np.s_[int(4096/3):int(4096*2/3), :], np.s_[int(4096*2/3):, :]]
         for d in data_ranges:
             print(boundary(lbl[d], pred[d]))
-
+    elif True:
+        with open("/home/eivind/Documents/polarlys_datasets/test/test_vessel_labels.txt", "r") as index:
+            lines = index.readlines()[400:]
+            for line_num, line in enumerate(lines):
+                filename = line.split(";")[0]
+                file_label = np.load(osp.join(label_folder, filename.replace(".bmp", "_label.npy")))
+                file_data = cv2.imread(osp.join(data_folder, filename), 0)[:, 0:2000]
+                process_label(file_data, file_label)
